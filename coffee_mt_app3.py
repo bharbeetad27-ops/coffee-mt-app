@@ -62,6 +62,14 @@ button {
 </style>
 """, unsafe_allow_html=True)
 
+# 🌐 TOP HEADER (PASTE HERE)
+
+st.markdown("""
+<div style="padding: 20px 40px; background-color: white; border-bottom: 1px solid #e5e7eb;">
+    <h2 style="margin: 0; color: #0f172a;">Coffee Trade Analytics</h2>
+</div>
+""", unsafe_allow_html=True)
+
 # ── HS CODE CLASSIFICATION ─────────────────────────────────────────
 COFFEE_HSN  = {'21011110', '21011190', '21011120', '21011130', '21011100'}
 CHICORY_HSN = {'21011200', '21013010', '21012000'}
