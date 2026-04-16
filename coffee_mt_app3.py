@@ -1,42 +1,50 @@
 import streamlit as st
 import pandas as pd
 
-# =========================
-# PAGE CONFIG
-# =========================
+# ---------------- PAGE CONFIG ----------------
 st.set_page_config(
     page_title="Coffee Trade Intelligence",
     layout="wide"
 )
 
-# =========================
-# GLOBAL STYLES
-# =========================
+# ---------------- STYLING ----------------
 st.markdown("""
 <style>
+
+/* Background */
+body {
+    background-color: #0b1220;
+}
+
+/* HERO */
 .hero {
-    background: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.85)),
+    background: linear-gradient(rgba(2,6,23,0.85), rgba(2,6,23,0.9)),
                 url("https://images.unsplash.com/photo-1509042239860-f550ce710b93");
     background-size: cover;
     background-position: center;
     padding: 100px 5%;
-    border-radius: 0 0 20px 20px;
     color: white;
-}
-.hero h1 {
-    font-size: 48px;
-    margin-bottom: 10px;
-}
-.hero p {
-    font-size: 18px;
-    color: #cbd5f5;
+    border-radius: 0 0 20px 20px;
 }
 
+/* LIGHT SECTION */
 .section {
+    background: #f8fafc;
     padding: 60px 5%;
-    background-color: #f8fafc;
+    margin: -50px 5% 40px 5%;
+    border-radius: 16px;
 }
 
+/* TEXT FIX */
+.section h2 {
+    color: #0f172a;
+}
+
+.section p {
+    color: #475569;
+}
+
+/* CARDS */
 .card-container {
     display: flex;
     gap: 20px;
@@ -49,26 +57,45 @@ st.markdown("""
     background: white;
     padding: 25px;
     border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+    box-shadow: 0 6px 25px rgba(0,0,0,0.08);
 }
 
+.card h3 {
+    color: #0f172a;
+}
+
+.card p {
+    color: #64748b;
+}
+
+/* TOOL SECTION */
 .tool {
     padding: 40px 5%;
+    color: white;
 }
 
-.metric {
-    background: #0f172a;
-    color: white;
+/* METRICS */
+.metric-box {
+    background: #1e293b;
     padding: 20px;
     border-radius: 12px;
     text-align: center;
 }
+
+.metric-box h3 {
+    margin: 0;
+    font-size: 28px;
+}
+
+.metric-box p {
+    margin: 0;
+    color: #94a3b8;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# HERO
-# =========================
+# ---------------- HERO ----------------
 st.markdown("""
 <div class="hero">
     <h1>Coffee Trade Intelligence</h1>
@@ -76,15 +103,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# =========================
-# INFO SECTION (NO BUG)
-# =========================
+# ---------------- FEATURES ----------------
 st.markdown("""
 <div class="section">
 
 <h2 style="text-align:center;">Powerful Trade Data Processing</h2>
-
-<p style="text-align:center; color:#64748b; margin-bottom:40px;">
+<p style="text-align:center;">
 Automate classification, cleaning and MT conversion of export data in seconds
 </p>
 
@@ -110,56 +134,57 @@ Automate classification, cleaning and MT conversion of export data in seconds
 </div>
 """, unsafe_allow_html=True)
 
-# =========================
-# TOOL SECTION
-# =========================
+# ---------------- TOOL SECTION ----------------
 st.markdown('<div class="tool">', unsafe_allow_html=True)
 
-st.markdown("## Data Processing Pipeline")
+st.header("Data Processing Pipeline")
 
-files = st.file_uploader(
-    "Upload Excel files",
-    type=["xlsx"],
-    accept_multiple_files=True
-)
+# Upload exclusion list
+st.subheader("Stage 1 — Upload Exclusion List")
+exclusion_file = st.file_uploader("Upload exclusion Excel", type=["xlsx"])
 
-if files:
-    st.markdown("### Uploaded Files")
-    for f in files:
-        st.write(f.name)
+# Upload raw files
+st.subheader("Stage 2 — Upload Raw Data")
+raw_files = st.file_uploader("Upload raw files", type=["xlsx"], accept_multiple_files=True)
 
-    try:
-        df = pd.read_excel(files[0])
+# ---------------- PROCESS BUTTON ----------------
+if st.button("Run Conversion"):
 
-        st.markdown("### Data Preview")
-        st.dataframe(df.head(10))
+    if raw_files:
 
-        total = len(df)
-        processed = int(total * 0.9)
+        total_rows = 0
+        total_weight = 0
 
-        st.markdown("### Processing Metrics")
+        for file in raw_files:
+            df = pd.read_excel(file)
+
+            total_rows += len(df)
+
+            if "NETWT" in df.columns:
+                total_weight += df["NETWT"].sum()
+
+        # ---------------- METRICS ----------------
+        st.markdown("### Conversion Summary")
 
         col1, col2 = st.columns(2)
 
-        with col1:
-            st.markdown(f"""
-            <div class="metric">
-                <h3>{total}</h3>
-                <p>Total Records</p>
-            </div>
-            """, unsafe_allow_html=True)
+        col1.markdown(f"""
+        <div class="metric-box">
+            <h3>{total_rows}</h3>
+            <p>Total Rows Processed</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-        with col2:
-            st.markdown(f"""
-            <div class="metric">
-                <h3>{processed}</h3>
-                <p>Processed Records</p>
-            </div>
-            """, unsafe_allow_html=True)
+        col2.markdown(f"""
+        <div class="metric-box">
+            <h3>{round(total_weight,2)}</h3>
+            <p>Total Weight (KGS)</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         st.success("Processing Complete ✅")
 
-    except Exception as e:
-        st.error("Error reading file")
+    else:
+        st.error("Please upload at least one raw file")
 
 st.markdown('</div>', unsafe_allow_html=True)
