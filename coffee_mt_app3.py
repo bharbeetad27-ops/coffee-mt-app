@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 # =========================
-# STYLING (CSS)
+# GLOBAL STYLES
 # =========================
 st.markdown("""
 <style>
@@ -24,23 +24,25 @@ st.markdown("""
     color: white;
 }
 .hero h1 {
-    font-size: 50px;
+    font-size: 48px;
     margin-bottom: 10px;
 }
 .hero p {
     font-size: 18px;
     color: #cbd5f5;
-    margin-bottom: 30px;
 }
+
 .section {
     padding: 60px 5%;
     background-color: #f8fafc;
 }
-.cards {
+
+.card-container {
     display: flex;
     gap: 20px;
     flex-wrap: wrap;
 }
+
 .card {
     flex: 1;
     min-width: 250px;
@@ -49,9 +51,11 @@ st.markdown("""
     border-radius: 12px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.05);
 }
+
 .tool {
     padding: 40px 5%;
 }
+
 .metric {
     background: #0f172a;
     color: white;
@@ -63,7 +67,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# HERO SECTION
+# HERO
 # =========================
 st.markdown("""
 <div class="hero">
@@ -73,35 +77,35 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# INFO SECTION (FIXED)
+# INFO SECTION (NO BUG)
 # =========================
 st.markdown("""
 <div class="section">
 
-    <h2 style="text-align:center;">Powerful Trade Data Processing</h2>
+<h2 style="text-align:center;">Powerful Trade Data Processing</h2>
 
-    <p style="text-align:center; color:#64748b; margin-bottom:40px;">
-        Automate classification, cleaning and MT conversion of export data in seconds
-    </p>
+<p style="text-align:center; color:#64748b; margin-bottom:40px;">
+Automate classification, cleaning and MT conversion of export data in seconds
+</p>
 
-    <div class="cards">
+<div class="card-container">
 
-        <div class="card">
-            <h3>⚡ Fast Processing</h3>
-            <p>Upload raw files and instantly process large datasets.</p>
-        </div>
+<div class="card">
+<h3>⚡ Fast Processing</h3>
+<p>Upload raw files and instantly process large datasets.</p>
+</div>
 
-        <div class="card">
-            <h3>📊 Smart Classification</h3>
-            <p>Automatically separates Coffee & Chicory using HS codes.</p>
-        </div>
+<div class="card">
+<h3>📊 Smart Classification</h3>
+<p>Automatically separates Coffee & Chicory using HS codes.</p>
+</div>
 
-        <div class="card">
-            <h3>📦 Accurate Conversion</h3>
-            <p>Handles KGS, NOS, ML and complex formats reliably.</p>
-        </div>
+<div class="card">
+<h3>📦 Accurate Conversion</h3>
+<p>Handles KGS, NOS, ML and complex formats reliably.</p>
+</div>
 
-    </div>
+</div>
 
 </div>
 """, unsafe_allow_html=True)
@@ -119,11 +123,7 @@ files = st.file_uploader(
     accept_multiple_files=True
 )
 
-# =========================
-# PROCESSING
-# =========================
 if files:
-
     st.markdown("### Uploaded Files")
     for f in files:
         st.write(f.name)
@@ -159,7 +159,7 @@ if files:
 
         st.success("Processing Complete ✅")
 
-    except:
-        st.error("Error reading file. Please check format.")
+    except Exception as e:
+        st.error("Error reading file")
 
 st.markdown('</div>', unsafe_allow_html=True)
