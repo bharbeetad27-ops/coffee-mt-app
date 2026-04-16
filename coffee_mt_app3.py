@@ -12,8 +12,21 @@ Run:
 """
 
 import streamlit as st
-st.title("☕ Coffee MT Converter")
-st.info("Upload exclusion list → upload raw data → download cleaned file")
+st.set_page_config(
+    page_title="Trade Data Tool",
+    page_icon="📊",
+    layout="wide"
+)
+
+st.title("📊 Trade Data Standardization Tool")
+
+st.markdown("""
+### Clean, standardize and convert export data into metric tonnes (MTS)
+
+Upload your data, apply validation rules, and get standardized outputs in one step.
+""")
+
+st.info("Step 1: Upload exclusion list → Step 2: Upload raw data → Step 3: Download cleaned output")
 import pandas as pd
 import re
 import datetime
