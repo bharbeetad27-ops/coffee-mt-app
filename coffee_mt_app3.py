@@ -25,6 +25,24 @@ st.set_page_config(
     layout="wide"
 )
 
+
+st.markdown("""
+<style>
+
+/* MAKE PAGE FULL WIDTH */
+.block-container {
+    padding-left: 5rem;
+    padding-right: 5rem;
+    max-width: 100% !important;
+}
+
+/* REMOVE TOP GAP */
+.main > div {
+    padding-top: 0rem;
+}
+
+</style>
+""", unsafe_allow_html=True)
 st.markdown("""
 <style>
 
