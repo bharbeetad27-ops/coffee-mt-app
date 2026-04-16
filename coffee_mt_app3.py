@@ -12,21 +12,6 @@ Run:
 """
 
 import streamlit as st
-st.set_page_config(
-    page_title="Trade Data Tool",
-    page_icon="📊",
-    layout="wide"
-)
-
-st.title("📊 Trade Data Standardization Tool")
-
-st.markdown("""
-### Clean, standardize and convert export data into metric tonnes (MTS)
-
-Upload your data, apply validation rules, and get standardized outputs in one step.
-""")
-
-st.info("Step 1: Upload exclusion list → Step 2: Upload raw data → Step 3: Download cleaned output")
 import pandas as pd
 import re
 import datetime
@@ -180,14 +165,26 @@ def convert_to_mt(row):
     if pd.isna(qty):
         return pd.Series([None, 'BLANK'])
 
+    # 1. DIRECT — KGS
     if unit in ('KGS', 'KG'):
         return pd.Series([round(qty / 1000, 6), 'DIRECT'])
 
+    # 2. DIRECT — MTS
     if unit in ('MTS', 'MT', 'MTONS'):
         return pd.Series([round(float(qty), 6), 'DIRECT'])
 
-    if unit in ('NOS', 'CTN', 'CTNS', 'CARTONS', 'CARTON', 'PCS', 'PKGS'):
+    # 3. NOS / carton-type units
+    if unit in ('NOS', 'CTN', 'CTNS', 'CTM', 'CARTONS', 'CARTON', 'PCS', 'PKGS'):
         weight_g = None
+
+        # A: NET WT pattern — "NET WT:1.200 KGS" / "NET WT:0.600KGS"
+        m = re.search(r'NET\s*WT[:\s]*(\d+(?:\.\d+)?)\s*KGS?\b', desc)
+        if m:
+            w = float(m.group(1))
+            if w <= 500:
+                return pd.Series([round(qty * w / 1000, 6), 'PARSED'])
+
+        # B: "= X KGS NET"
         m = re.search(r'=\s*(\d+(?:\.\d+)?)\s*KGS?\b', desc)
         if m:
             w = float(m.group(1))
@@ -195,30 +192,92 @@ def convert_to_mt(row):
                 return pd.Series([round(qty * w / 1000, 6), 'PARSED'])
             else:
                 return pd.Series([round(w / 1000, 6), 'PARSED'])
+
+        # C: "EACH CARTON CONSIST OF X KGS NET"
+        m = re.search(r'CONSIST\s*OF\s*(\d+(?:\.\d+)?)\s*KGS?\b', desc)
+        if m:
+            w = float(m.group(1))
+            if w <= 500:
+                return pd.Series([round(qty * w / 1000, 6), 'PARSED'])
+
+        # D: "X KGS X Y" — e.g. "0.2 KGS X 12 PCS"
+        m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*X\s*(\d+)', desc)
+        if m:
+            w_kg  = float(m.group(1))
+            count = float(m.group(2))
+            return pd.Series([round(qty * w_kg * count / 1000, 6), 'PARSED'])
+
+        # E: standalone KG per unit
         m = re.search(r'(\d+(?:\.\d+)?)\s*KG\b', desc)
         if m:
             w = float(m.group(1))
             if w <= 500:
                 return pd.Series([round(qty * w / 1000, 6), 'PARSED'])
-        m = re.search(r'(\d+)\s*[X*]\s*(\d+(?:\.\d+)?)\s*(?:GMS?|GRAM|G)\b', desc)
+
+        # F: leading "WeightGMxQty" e.g. "200GMX60PKTS","500GMX24PKTS","50GMX12BTLS"
+        m = re.search(r'^(\d+(?:\.\d+)?)\s*GM[SX]?\s*[X*]?\s*(\d+)', desc)
         if m:
-            weight_g = float(m.group(1)) * float(m.group(2))
+            grams = float(m.group(1))
+            count = float(m.group(2))
+            if 1 <= grams <= 10000:
+                weight_g = grams * count
+
+        # G: "WeightGXQty" e.g. "40GX24JARS","90GMX24","FORCE 50 GMX 24 TINS"
+        if weight_g is None:
+            m = re.search(r'(\d+(?:\.\d+)?)\s*(?:GM[S]?|G)\s*[X*]\s*(\d+)', desc)
+            if m:
+                grams = float(m.group(1))
+                count = float(m.group(2))
+                if 1 <= grams <= 10000 and count <= 10000:
+                    weight_g = grams * count
+
+        # H: forward NxWeightG e.g. "24X90G","6X180G","30X45G","144XX0.9G"
+        if weight_g is None:
+            m = re.search(r'(\d+)\s*X{1,2}\s*(\d+(?:\.\d+)?)\s*(?:GMS?|GRAM|G)\b', desc)
+            if m:
+                count = float(m.group(1))
+                grams = float(m.group(2))
+                if 1 <= grams <= 10000 and count <= 10000:
+                    weight_g = count * grams
+
+        # I: PKG format "(1X100GMX12BOTTLES)" / "(1X50GMX12BOTTLES)"
+        if weight_g is None:
+            m = re.search(r'\(\d+X(\d+(?:\.\d+)?)GM[SX]?(\d+)', desc)
+            if m:
+                grams        = float(m.group(1))
+                bottle_count = float(m.group(2))
+                if 1 <= grams <= 10000:
+                    weight_g = grams * bottle_count
+
+        # J: "X GRAMS EACH" e.g. "50 GRAMS EACHTIN"
+        if weight_g is None:
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GRAMS?\s*EACH', desc)
+            if m:
+                candidate = float(m.group(1))
+                if 1 <= candidate <= 10000:
+                    weight_g = candidate
+
+        # K: standalone grams — last resort
         if weight_g is None:
             m = re.search(r'(\d+(?:\.\d+)?)\s*(?:GMS?|GRAM|G)\b', desc)
             if m:
                 candidate = float(m.group(1))
                 if 1 <= candidate <= 10000:
                     weight_g = candidate
+
         if weight_g is not None:
             return pd.Series([round(qty * weight_g / 1_000_000, 6), 'PARSED'])
+
         return pd.Series([None, 'BLANK'])
 
+    # 4. PARSED_ML — liquid volumes, density assumed 1g/ml
     if unit in ('ML', 'MLT'):
         return pd.Series([round(qty / 1_000_000, 6), 'PARSED_ML_ASSUMED'])
 
     if unit in ('LTR', 'LT', 'LTRS', 'LITRE', 'LITRES'):
         return pd.Series([round(qty / 1000, 6), 'PARSED_ML_ASSUMED'])
 
+    # 5. BLANK
     return pd.Series([None, 'BLANK'])
 
 
