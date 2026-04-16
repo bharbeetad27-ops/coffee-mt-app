@@ -21,7 +21,7 @@ import zipfile
 # 🎨 DESIGN SETTINGS (paste this exactly here)
 
 st.set_page_config(
-    page_title="Coffee Trade Analytics",
+    page_title="Raw Data Cleaning Tool",
     layout="wide"
 )
 
