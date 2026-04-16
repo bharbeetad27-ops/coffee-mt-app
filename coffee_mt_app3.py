@@ -11,6 +11,34 @@ st.set_page_config(
 st.markdown("""
 <style>
 
+/* MOBILE RESPONSIVENESS */
+@media (max-width: 768px) {
+    .hero {
+        padding: 60px 20px !important;
+    }
+
+    .hero h1 {
+        font-size: 28px !important;
+    }
+
+    .section {
+        margin: -30px 10px 30px 10px !important;
+        padding: 30px 15px !important;
+    }
+
+    .card-container {
+        flex-direction: column !important;
+    }
+
+    .card {
+        width: 100% !important;
+    }
+
+    button {
+        width: 100% !important;
+    }
+}
+
 /* Background */
 body {
     background-color: #0b1220;
@@ -35,13 +63,15 @@ body {
     border-radius: 16px;
 }
 
-/* TEXT FIX */
+/* TEXT */
 .section h2 {
     color: #0f172a;
+    text-align: center;
 }
 
 .section p {
     color: #475569;
+    text-align: center;
 }
 
 /* CARDS */
@@ -107,8 +137,8 @@ st.markdown("""
 st.markdown("""
 <div class="section">
 
-<h2 style="text-align:center;">Powerful Trade Data Processing</h2>
-<p style="text-align:center;">
+<h2>Powerful Trade Data Processing</h2>
+<p>
 Automate classification, cleaning and MT conversion of export data in seconds
 </p>
 
@@ -134,12 +164,12 @@ Automate classification, cleaning and MT conversion of export data in seconds
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------- TOOL SECTION ----------------
+# ---------------- TOOL ----------------
 st.markdown('<div class="tool">', unsafe_allow_html=True)
 
 st.header("Data Processing Pipeline")
 
-# Upload exclusion list
+# Upload exclusion
 st.subheader("Stage 1 — Upload Exclusion List")
 exclusion_file = st.file_uploader("Upload exclusion Excel", type=["xlsx"])
 
@@ -147,7 +177,7 @@ exclusion_file = st.file_uploader("Upload exclusion Excel", type=["xlsx"])
 st.subheader("Stage 2 — Upload Raw Data")
 raw_files = st.file_uploader("Upload raw files", type=["xlsx"], accept_multiple_files=True)
 
-# ---------------- PROCESS BUTTON ----------------
+# ---------------- PROCESS ----------------
 if st.button("Run Conversion"):
 
     if raw_files:
@@ -163,7 +193,6 @@ if st.button("Run Conversion"):
             if "NETWT" in df.columns:
                 total_weight += df["NETWT"].sum()
 
-        # ---------------- METRICS ----------------
         st.markdown("### Conversion Summary")
 
         col1, col2 = st.columns(2)
@@ -171,7 +200,7 @@ if st.button("Run Conversion"):
         col1.markdown(f"""
         <div class="metric-box">
             <h3>{total_rows}</h3>
-            <p>Total Rows Processed</p>
+            <p>Total Rows</p>
         </div>
         """, unsafe_allow_html=True)
 
@@ -185,6 +214,6 @@ if st.button("Run Conversion"):
         st.success("Processing Complete ✅")
 
     else:
-        st.error("Please upload at least one raw file")
+        st.error("Please upload files")
 
 st.markdown('</div>', unsafe_allow_html=True)
