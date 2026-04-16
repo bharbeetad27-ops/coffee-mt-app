@@ -18,6 +18,50 @@ import datetime
 import io
 import zipfile
 
+# 🎨 DESIGN SETTINGS (paste this exactly here)
+
+st.set_page_config(
+    page_title="Coffee Trade Analytics",
+    layout="wide"
+)
+
+st.markdown("""
+<style>
+
+/* REMOVE SIDEBAR */
+section[data-testid="stSidebar"] {
+    display: none;
+}
+
+/* MAIN BACKGROUND */
+.stApp {
+    background-color: #f8fafc;
+}
+
+/* TEXT */
+h1, h2, h3 {
+    color: #0f172a;
+    font-weight: 600;
+}
+
+/* UPLOAD BOX */
+[data-testid="stFileUploader"] {
+    background-color: white !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 12px;
+    padding: 16px;
+}
+
+/* BUTTON */
+button {
+    background-color: #2563eb !important;
+    color: white !important;
+    border-radius: 8px !important;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
 # ── HS CODE CLASSIFICATION ─────────────────────────────────────────
 COFFEE_HSN  = {'21011110', '21011190', '21011120', '21011130', '21011100'}
 CHICORY_HSN = {'21011200', '21013010', '21012000'}
