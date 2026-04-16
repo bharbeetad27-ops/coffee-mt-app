@@ -10,26 +10,35 @@ st.set_page_config(
 )
 
 # =========================
-# HERO SECTION (TOP BANNER)
+# HERO SECTION
 # =========================
 st.markdown("""
 <style>
 .hero {
-    background: linear-gradient(rgba(2,6,23,0.8), rgba(2,6,23,0.9)),
+    background: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.85)),
                 url("https://images.unsplash.com/photo-1509042239860-f550ce710b93");
     background-size: cover;
     background-position: center;
-    padding: 120px 5%;
-    border-radius: 0px 0px 20px 20px;
+    padding: 100px 5%;
+    border-radius: 0 0 20px 20px;
     color: white;
 }
 .hero h1 {
-    font-size: 48px;
+    font-size: 50px;
     margin-bottom: 10px;
 }
 .hero p {
     font-size: 18px;
     color: #cbd5f5;
+    margin-bottom: 30px;
+}
+.cta-btn {
+    background-color: #22c55e;
+    color: white;
+    padding: 12px 28px;
+    border-radius: 8px;
+    font-weight: 600;
+    text-decoration: none;
 }
 .section {
     padding: 60px 5%;
@@ -48,17 +57,10 @@ st.markdown("""
     border-radius: 12px;
     box-shadow: 0 4px 20px rgba(0,0,0,0.05);
 }
-.card h3 {
-    margin-bottom: 10px;
-    color: #0f172a;
+.tool {
+    padding: 40px 5%;
 }
-.card p {
-    color: #64748b;
-}
-.tool-section {
-    padding: 50px 5%;
-}
-.metric-box {
+.metric {
     background: #0f172a;
     color: white;
     padding: 20px;
@@ -70,25 +72,26 @@ st.markdown("""
 <div class="hero">
     <h1>Coffee Trade Intelligence</h1>
     <p>Upload → Clean → Convert → Download</p>
+    <a href="#tool" class="cta-btn">Start Processing ↓</a>
 </div>
 """, unsafe_allow_html=True)
 
 # =========================
-# INFO SECTION (NO MORE EMPTY SPACE)
+# INFO SECTION (FILLS GAP)
 # =========================
 st.markdown("""
 <div class="section">
 
     <h2 style="text-align:center;">Powerful Trade Data Processing</h2>
     <p style="text-align:center; color:#64748b; margin-bottom:40px;">
-        Automate classification, cleaning and MT conversion of export data
+        Automate classification, cleaning and MT conversion of export data in seconds
     </p>
 
     <div class="cards">
 
         <div class="card">
             <h3>⚡ Fast Processing</h3>
-            <p>Upload raw files and get instant cleaned outputs.</p>
+            <p>Upload raw files and instantly process large datasets.</p>
         </div>
 
         <div class="card">
@@ -107,21 +110,20 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# MAIN TOOL SECTION
+# TOOL SECTION (NO GAP NOW)
 # =========================
-st.markdown('<div class="tool-section">', unsafe_allow_html=True)
+st.markdown('<div class="tool" id="tool">', unsafe_allow_html=True)
 
 st.markdown("## Data Processing Pipeline")
 
-# Upload files
 files = st.file_uploader(
-    "Upload your raw Excel files",
+    "Upload Excel files",
     type=["xlsx"],
     accept_multiple_files=True
 )
 
 # =========================
-# DATA PROCESSING + METRICS
+# PROCESSING
 # =========================
 if files:
 
@@ -135,8 +137,8 @@ if files:
         st.markdown("### Data Preview")
         st.dataframe(df.head(10))
 
-        total_rows = len(df)
-        processed_rows = int(total_rows * 0.9)  # placeholder logic
+        total = len(df)
+        processed = int(total * 0.9)
 
         st.markdown("### Processing Metrics")
 
@@ -144,23 +146,23 @@ if files:
 
         with col1:
             st.markdown(f"""
-            <div class="metric-box">
-                <h3>{total_rows}</h3>
+            <div class="metric">
+                <h3>{total}</h3>
                 <p>Total Records</p>
             </div>
             """, unsafe_allow_html=True)
 
         with col2:
             st.markdown(f"""
-            <div class="metric-box">
-                <h3>{processed_rows}</h3>
+            <div class="metric">
+                <h3>{processed}</h3>
                 <p>Processed Records</p>
             </div>
             """, unsafe_allow_html=True)
 
         st.success("Processing Complete ✅")
 
-    except Exception as e:
-        st.error("Error reading file. Please check format.")
+    except:
+        st.error("Error reading file")
 
 st.markdown('</div>', unsafe_allow_html=True)
