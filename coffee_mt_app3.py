@@ -83,8 +83,23 @@ button {
 # 🌐 TOP HEADER (PASTE HERE)
 
 st.markdown("""
-<div style="padding: 20px 40px; background-color: white; border-bottom: 1px solid #e5e7eb;">
-    <h2 style="margin: 0; color: #0f172a;">Coffee Trade Analytics</h2>
+<div style="
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 40px;
+    background-color: white;
+    border-bottom: 1px solid #e5e7eb;
+">
+
+    <h2 style="margin: 0; font-weight: 600;">
+        ☕ Coffee Analytics
+    </h2>
+
+    <div style="color: #64748b;">
+        Trade Intelligence Tool
+    </div>
+
 </div>
 """, unsafe_allow_html=True)
 
