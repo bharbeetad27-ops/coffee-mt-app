@@ -80,8 +80,6 @@ button {
 </style>
 """, unsafe_allow_html=True)
 
-# 🌐 TOP HEADER (PASTE HERE)
-
 st.markdown("""
 <div style="
     display: flex;
@@ -90,9 +88,6 @@ st.markdown("""
     padding: 16px 48px;
     background-color: white;
     border-bottom: 1px solid #e5e7eb;
-    position: sticky;
-    top: 0;
-    z-index: 999;
 ">
 
     <h2 style="margin: 0; font-weight: 600; color:#0f172a;">
