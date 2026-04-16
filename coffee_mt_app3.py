@@ -12,6 +12,8 @@ Run:
 """
 
 import streamlit as st
+st.title("☕ Coffee MT Converter")
+st.info("Upload exclusion list → upload raw data → download cleaned file")
 import pandas as pd
 import re
 import datetime
