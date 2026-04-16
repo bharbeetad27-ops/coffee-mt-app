@@ -163,6 +163,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# 🌟 HERO SECTION (PASTE HERE)
+
+st.markdown("""
+<div style="
+    background: linear-gradient(to right, #0f172a, #1e293b);
+    color: white;
+    padding: 60px 40px;
+    border-radius: 12px;
+    margin-bottom: 30px;
+">
+    <h1 style="font-size: 40px;">
+        Trade Data Conversion Engine
+    </h1>
+    <p style="font-size: 18px;">
+        Upload → Clean → Convert → Download
+    </p>
+</div>
+""", unsafe_allow_html=True)
+
 # ══════════════════════════════════════════════════════════════════
 #  CORE LOGIC
 # ══════════════════════════════════════════════════════════════════
