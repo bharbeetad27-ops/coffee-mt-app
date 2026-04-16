@@ -119,13 +119,6 @@ def classify_hsn(val):
         return 'Chicory'
     return None   # everything else — drop
 
-# ── PAGE CONFIG ────────────────────────────────────────────────────
-st.set_page_config(
-    page_title="Coffee MT Converter",
-    page_icon="☕",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
 
 # ── CUSTOM CSS ─────────────────────────────────────────────────────
 st.markdown("""
