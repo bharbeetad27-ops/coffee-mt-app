@@ -10,7 +10,7 @@ st.set_page_config(
 )
 
 # =========================
-# HERO SECTION
+# STYLING (CSS)
 # =========================
 st.markdown("""
 <style>
@@ -31,14 +31,6 @@ st.markdown("""
     font-size: 18px;
     color: #cbd5f5;
     margin-bottom: 30px;
-}
-.cta-btn {
-    background-color: #22c55e;
-    color: white;
-    padding: 12px 28px;
-    border-radius: 8px;
-    font-weight: 600;
-    text-decoration: none;
 }
 .section {
     padding: 60px 5%;
@@ -68,21 +60,26 @@ st.markdown("""
     text-align: center;
 }
 </style>
+""", unsafe_allow_html=True)
 
+# =========================
+# HERO SECTION
+# =========================
+st.markdown("""
 <div class="hero">
     <h1>Coffee Trade Intelligence</h1>
     <p>Upload → Clean → Convert → Download</p>
-    <a href="#tool" class="cta-btn">Start Processing ↓</a>
 </div>
 """, unsafe_allow_html=True)
 
 # =========================
-# INFO SECTION (FILLS GAP)
+# INFO SECTION (FIXED)
 # =========================
 st.markdown("""
 <div class="section">
 
     <h2 style="text-align:center;">Powerful Trade Data Processing</h2>
+
     <p style="text-align:center; color:#64748b; margin-bottom:40px;">
         Automate classification, cleaning and MT conversion of export data in seconds
     </p>
@@ -110,9 +107,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =========================
-# TOOL SECTION (NO GAP NOW)
+# TOOL SECTION
 # =========================
-st.markdown('<div class="tool" id="tool">', unsafe_allow_html=True)
+st.markdown('<div class="tool">', unsafe_allow_html=True)
 
 st.markdown("## Data Processing Pipeline")
 
@@ -163,6 +160,6 @@ if files:
         st.success("Processing Complete ✅")
 
     except:
-        st.error("Error reading file")
+        st.error("Error reading file. Please check format.")
 
 st.markdown('</div>', unsafe_allow_html=True)
