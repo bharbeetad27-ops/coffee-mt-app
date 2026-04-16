@@ -87,16 +87,19 @@ st.markdown("""
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 20px 40px;
+    padding: 16px 48px;
     background-color: white;
     border-bottom: 1px solid #e5e7eb;
+    position: sticky;
+    top: 0;
+    z-index: 999;
 ">
 
-    <h2 style="margin: 0; font-weight: 600;">
-        ☕ Coffee Analytics
+    <h2 style="margin: 0; font-weight: 600; color:#0f172a;">
+        Coffee Analytics
     </h2>
 
-    <div style="color: #64748b;">
+    <div style="color: #64748b; font-size:14px;">
         Trade Intelligence Tool
     </div>
 
