@@ -88,6 +88,33 @@ COFFEE_CODES  = [21011110, 21011120, 21011130, 21011190, 21011200]
 CHICORY_CODES = [210130, 21013010]
 ALL_CODES     = COFFEE_CODES + CHICORY_CODES
 
+# ── STRICT COFFEE SIGNAL CHECK (applied to 21011190 and 21011200 only) ────────
+# A row under these HSN codes is kept ONLY if its description contains
+# at least one of these signals. Catches noodles, tea, bundled products
+# without needing them individually listed in the exclusion file.
+
+STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
+
+COFFEE_SIGNALS = [
+    # Explicit
+    'COFFEE',
+    # Coffee-style drinks
+    'CAPPUCCINO', 'CAPUCCINO', 'CAPUCHINO',
+    'CPC',
+    'COFFEE LATTE', 'CAFE LATTE',
+    'ESPRESSO', 'AMERICANO', 'MOCHA',
+    'MACCHIATO', 'FRAPPE', 'COLD BREW', 'COLD COFFEE',
+    # Brand names
+    'NESCAFE', 'NESCAFÉ', 'BRU', 'LEVISTA', 'DAVIDOFF',
+    'COTHAS', 'CONTINENTAL', 'CHAIZUP', 'BEANIES',
+    'TATA COFFEE', 'CAFÉ', 'CAFE',
+    # Process / form words
+    'SPRAY DRIED', 'FREEZE DRIED', 'AGGLOMERATED',
+    'DECOCTION', 'PERCOLATE', 'ROAST AND GROUND',
+    # Chicory blend context
+    'CHICORY',
+]
+
 # ── STYLING ──────────────────────────────────────────────────────
 COFFEE_HDR  = PatternFill(start_color='1F4E79', end_color='1F4E79', fill_type='solid')
 CHICORY_HDR = PatternFill(start_color='375623', end_color='375623', fill_type='solid')
