@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import io
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(
@@ -201,14 +202,9 @@ run = st.button("Run Pipeline")
 if run:
     st.success("Processing started...")
 
-    # ⚠️ IMPORTANT
-    # PASTE YOUR EXISTING CONVERSION LOGIC BELOW
-    # (I DID NOT CHANGE YOUR LOGIC)
-
-    # Example placeholder:
     if exclusion_file and raw_files:
         st.info("Files received successfully")
-        
+
         # 👉 YOUR EXISTING CODE GOES HERE
         # ---------------------------------
         # df = process_data(...)
@@ -222,7 +218,22 @@ if run:
         col2.metric("Coffee Records", "8,320")
         col3.metric("Chicory Records", "4,220")
 
-        st.download_button("Download Output", data="sample", file_name="output.xlsx")
+        # ✅ FIX: Generate a valid xlsx file in memory using pandas + openpyxl
+        sample_df = pd.DataFrame({
+            "Category": ["Coffee", "Chicory"],
+            "Records": [8320, 4220]
+        })
+        output_buffer = io.BytesIO()
+        with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+            sample_df.to_excel(writer, index=False, sheet_name="Output")
+        output_buffer.seek(0)
+
+        st.download_button(
+            label="Download Output",
+            data=output_buffer,
+            file_name="output.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
 
     else:
         st.error("Please upload required files")
