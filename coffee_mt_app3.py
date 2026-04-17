@@ -101,7 +101,7 @@ COFFEE_SIGNALS = [
     # Coffee-style drinks
     'CAPPUCCINO', 'CAPUCCINO', 'CAPUCHINO',
     'CPC',
-    'COFFEE LATTE', 'CAFE LATTE',
+    'COFFEE LATTE', 'CAFE LATTE', 'LATTE',
     'ESPRESSO', 'AMERICANO', 'MOCHA',
     'MACCHIATO', 'FRAPPE', 'COLD BREW', 'COLD COFFEE',
     # Brand names
