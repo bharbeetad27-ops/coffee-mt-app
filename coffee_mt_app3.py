@@ -145,12 +145,30 @@ def load_exclusion_rules(excl_file):
     excl_df['HSN_FILTER'] = excl_df['HSN_FILTER'].astype(str).str.strip().replace('nan', '')
     return excl_df
 
-
 def should_exclude(description, hsn_code, excl_df):
-    """Returns (True, reason) if row should be removed, else (False, '')."""
-    desc = str(description).upper().strip()
-    hsn  = str(int(hsn_code)) if pd.notna(hsn_code) else ''
+    """
+    Returns (True, reason) if row should be removed, else (False, '').
 
+    Layer 1 — Strict coffee-signal check (21011190 and 21011200 only):
+        If the description contains zero coffee signals → REMOVE.
+        This permanently eliminates noodles, tea, bundled non-coffee
+        products mis-declared under these codes without needing them
+        individually listed in the exclusion file.
+
+    Layer 2 — Exclusion list check (all HSN codes):
+        If the description matches a rule in the uploaded exclusion file
+        → REMOVE. Coffee guard prevents confirmed coffee rows being caught.
+    """
+    desc = str(description).upper().strip()
+    hsn  = int(hsn_code) if pd.notna(hsn_code) else 0
+    hsn_str = str(hsn)
+
+    # ── LAYER 1: Strict coffee-signal check ───────────────────────────────────
+    if hsn in STRICT_COFFEE_CHECK_CODES:
+        if not any(signal in desc for signal in COFFEE_SIGNALS):
+            return True, f'HSN {hsn}: no coffee signal found in description'
+
+    # ── LAYER 2: Exclusion list (with coffee guard) ───────────────────────────
     COFFEE_GUARD = [
         'SOLUBLE COFFEE', 'INSTANT COFFEE', 'SPRAY DRIED COFFEE',
         'FREEZE DRIED COFFEE', 'COFFEE EXTRACT', 'COFFEE PREMIX',
@@ -164,7 +182,7 @@ def should_exclude(description, hsn_code, excl_df):
     for _, rule in excl_df.iterrows():
         kw         = rule['KEYWORD']
         hsn_filter = rule['HSN_FILTER']
-        if hsn_filter and hsn_filter != hsn:
+        if hsn_filter and hsn_filter != hsn_str:
             continue
         if rule['MATCH_TYPE'] == 'CONTAINS' and kw in desc:
             return True, rule['REASON']
@@ -172,6 +190,7 @@ def should_exclude(description, hsn_code, excl_df):
             return True, rule['REASON']
 
     return False, ''
+
 
 
 def convert_to_mt(row):
