@@ -165,7 +165,7 @@ def convert_to_mt(row):
         return round(float(qty), 6), 'DIRECT'
 
     # COUNT UNITS — parse from description
-    if unit in ('NOS', 'CTN', 'CTNS', 'CARTONS', 'CARTON', 'PCS', 'PKGS', 'UNT', 'BOX', 'CAN'):
+    if unit in ('NOS', 'CTN', 'CTNS', 'CARTONS', 'CARTON', 'PCS', 'PKGS', 'UNT', 'BOX', 'CAN', 'CTM'):
         weight_g = None
 
         # NET WT: X.XXX KGS
