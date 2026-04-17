@@ -172,10 +172,24 @@ def should_exclude(description, hsn_code, excl_df):
     hsn  = int(hsn_code) if pd.notna(hsn_code) else 0
     hsn_str = str(hsn)
 
-    # ── LAYER 1: Strict coffee-signal check ───────────────────────────────────
-    if hsn in STRICT_COFFEE_CHECK_CODES:
-        if not any(signal in desc for signal in COFFEE_SIGNALS):
-            return True, f'HSN {hsn}: no coffee signal found in description'
+# ── LAYER 1: Smarter classification ───────────────────────────────────
+if hsn in STRICT_COFFEE_CHECK_CODES:
+
+    has_strong = any(signal in desc for signal in COFFEE_SIGNALS)
+    has_weak   = any(signal in desc for signal in WEAK_COFFEE_SIGNALS)
+    has_tea    = any(signal in desc for signal in TEA_SIGNALS)
+
+    if has_strong:
+        return False, ''  # definite coffee
+
+    elif has_tea:
+        return True, f'HSN {hsn}: tea product detected'
+
+    elif has_weak:
+        return False, 'weak coffee signal (premix/sachet assumed coffee)'
+
+    else:
+        return True, f'HSN {hsn}: no coffee signal found'
 
     # ── LAYER 2: Exclusion list (with coffee guard) ───────────────────────────
     COFFEE_GUARD = [
