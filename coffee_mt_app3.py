@@ -97,7 +97,7 @@ STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
 
 COFFEE_SIGNALS = [
     # Explicit
-    'COFFEE', 'KAPPI',
+    'COFFEE', 'KAPPI', 'CAPPI', 'COFFE', 'COFEE',
     # Coffee-style drinks
     'CAPPUCCINO', 'CAPUCCINO', 'CAPUCHINO',
     'CPC',
