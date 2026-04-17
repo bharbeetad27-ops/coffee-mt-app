@@ -12,7 +12,6 @@ st.set_page_config(page_title="Coffee Trade Intelligence", layout="wide")
 # ---------------- HERO ----------------
 
 st.markdown("""
-
 <style>
 .stApp {background: #020617; color: white;}
 .hero {
@@ -40,143 +39,137 @@ STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
 # ---------------- SIGNALS ----------------
 
 COFFEE_SIGNALS = [
-'COFFEE','KAPPI','CAPPI','COFFE','COFEE',
-'CAPPUCCINO','CAPUCCINO','CAPUCHINO',
-'CPC','LATTE','ESPRESSO','AMERICANO','MOCHA',
-'MACCHIATO','FRAPPE','COLD BREW','COLD COFFEE',
-'NESCAFE','NESCAFÉ','BRU','LEVISTA','DAVIDOFF',
-'COTHAS','CONTINENTAL','CHAIZUP',
-'TATA COFFEE','CAFÉ','CAFE',
-'SPRAY DRIED','FREEZE DRIED','AGGLOMERATED',
-'DECOCTION','PERCOLATE','ROAST AND GROUND','CHICORY'
+    'COFFEE', 'KAPPI', 'CAPPI', 'COFFE', 'COFEE',
+    'CAPPUCCINO', 'CAPUCCINO', 'CAPUCHINO',
+    'CPC', 'LATTE', 'ESPRESSO', 'AMERICANO', 'MOCHA',
+    'MACCHIATO', 'FRAPPE', 'COLD BREW', 'COLD COFFEE',
+    'NESCAFE', 'NESCAFÉ', 'BRU', 'LEVISTA', 'DAVIDOFF',
+    'COTHAS', 'CONTINENTAL', 'CHAIZUP',
+    'TATA COFFEE', 'CAFÉ', 'CAFE',
+    'SPRAY DRIED', 'FREEZE DRIED', 'AGGLOMERATED',
+    'DECOCTION', 'PERCOLATE', 'ROAST AND GROUND', 'CHICORY'
 ]
 
 WEAK_COFFEE_SIGNALS = [
-'PREMIX','PRE-MIX','3 IN 1','2 IN 1',
-'SACHET','MIX','VENDING MIX'
+    'PREMIX', 'PRE-MIX', '3 IN 1', '2 IN 1',
+    'SACHET', 'MIX', 'VENDING MIX'
 ]
 
 TEA_SIGNALS = [
-'TEA','GREEN TEA','BLACK TEA',
-'MASALA TEA','CHAI','LEMON TEA','ICED TEA'
+    'TEA', 'GREEN TEA', 'BLACK TEA',
+    'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA'
 ]
 
 # ---------------- FILTER ----------------
 
 def should_exclude(desc, hsn, excl_df):
+    desc = str(desc).upper()
+    hsn = int(hsn) if pd.notna(hsn) else 0
 
-```
-desc = str(desc).upper()
-hsn = int(hsn) if pd.notna(hsn) else 0
-hsn_str = str(hsn)
+    if hsn in STRICT_COFFEE_CHECK_CODES:
+        strong = any(s in desc for s in COFFEE_SIGNALS)
+        weak   = any(s in desc for s in WEAK_COFFEE_SIGNALS)
+        tea    = any(s in desc for s in TEA_SIGNALS)
 
-if hsn in STRICT_COFFEE_CHECK_CODES:
+        if strong:
+            return False, ''
+        elif tea:
+            return True, "Tea detected"
+        elif weak:
+            return False, "Premix assumed coffee"
+        else:
+            return True, "No coffee signal"
 
-    strong = any(s in desc for s in COFFEE_SIGNALS)
-    weak   = any(s in desc for s in WEAK_COFFEE_SIGNALS)
-    tea    = any(s in desc for s in TEA_SIGNALS)
+    for _, r in excl_df.iterrows():
+        if r['MATCH_TYPE'] == "CONTAINS" and r['KEYWORD'] in desc:
+            return True, r['REASON']
 
-    if strong:
-        return False, ''
-
-    elif tea:
-        return True, "Tea detected"
-
-    elif weak:
-        return False, "Premix assumed coffee"
-
-    else:
-        return True, "No coffee signal"
-
-for _, r in excl_df.iterrows():
-    if r['MATCH_TYPE']=="CONTAINS" and r['KEYWORD'] in desc:
-        return True, r['REASON']
-
-return False, ''
-```
+    return False, ''
 
 # ---------------- MT ----------------
 
 def convert_to_mt(row):
+    qty  = row.get('STANDARD QUANTITY')
+    unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
+    desc = str(row.get('PRODUCT DESCRIPTION', '')).upper()
 
-```
-qty = row.get('STANDARD QUANTITY')
-unit = str(row.get('STANDARD QUANTITY UNIT','')).upper()
-desc = str(row.get('PRODUCT DESCRIPTION','')).upper()
+    if pd.isna(qty):
+        return None, 'BLANK'
 
-if pd.isna(qty):
-    return None,'BLANK'
+    if unit in ('KGS', 'KG'):
+        return qty / 1000, 'DIRECT'
 
-if unit in ('KGS','KG'):
-    return qty/1000,'DIRECT'
+    if unit in ('MTS', 'MT'):
+        return qty, 'DIRECT'
 
-if unit in ('MTS','MT'):
-    return qty,'DIRECT'
+    if unit in ('NOS', 'PCS', 'CTN'):
+        m = re.search(r'([\d.]+)\s*G', desc)
+        if m:
+            return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-if unit in ('NOS','PCS','CTN'):
-    m = re.search(r'([\d.]+)\s*G', desc)
-    if m:
-        return qty*float(m.group(1))/1_000_000,'PARSED'
-
-return None,'BLANK'
-```
+    return None, 'BLANK'
 
 # ---------------- PROCESS ----------------
 
 def process_file(file, excl_df):
+    df = pd.read_excel(file)
 
-```
-df = pd.read_excel(file)
+    hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
 
-hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
+    df = df[df[hs_col].isin(ALL_CODES)]
 
-df = df[df[hs_col].isin(ALL_CODES)]
+    keep, removed = [], []
 
-keep, removed = [], []
+    for _, r in df.iterrows():
+        ex, reason = should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df)
+        if ex:
+            r = r.copy()
+            r['REASON'] = reason
+            removed.append(r)
+        else:
+            keep.append(r)
 
-for _, r in df.iterrows():
-    ex, reason = should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df)
-    if ex:
-        r['REASON']=reason
-        removed.append(r)
-    else:
-        keep.append(r)
+    df = pd.DataFrame(keep)
 
-df = pd.DataFrame(keep)
+    coffee  = df[df[hs_col].isin(COFFEE_CODES)].copy()
+    chicory = df[df[hs_col].isin(CHICORY_CODES)].copy()
 
-coffee = df[df[hs_col].isin(COFFEE_CODES)].copy()
-chicory = df[df[hs_col].isin(CHICORY_CODES)].copy()
+    for d in [coffee, chicory]:
+        if len(d):
+            results = d.apply(convert_to_mt, axis=1)
+            d['MT']               = [x[0] for x in results]
+            d['MT_CONVERSION_STATUS'] = [x[1] for x in results]
 
-for d in [coffee,chicory]:
-    if len(d):
-        mt,status = zip(*d.apply(convert_to_mt,axis=1))
-        d['MT']=mt
-
-return coffee,chicory,pd.DataFrame(removed)
-```
+    return coffee, chicory, pd.DataFrame(removed)
 
 # ---------------- UI ----------------
 
 st.subheader("Upload Files")
 
-excl = st.file_uploader("Exclusion",type=["xlsx"])
-raws = st.file_uploader("Raw",type=["xlsx"],accept_multiple_files=True)
+excl = st.file_uploader("Exclusion List", type=["xlsx"])
+raws = st.file_uploader("Raw CYBEX Files", type=["xlsx"], accept_multiple_files=True)
 
 if st.button("Run"):
+    if not excl:
+        st.error("Please upload an exclusion list.")
+    elif not raws:
+        st.error("Please upload at least one raw file.")
+    else:
+        excl_df = pd.read_excel(excl)
 
-```
-excl_df = pd.read_excel(excl)
+        for f in raws:
+            c, ch, e = process_file(f, excl_df)
 
-for f in raws:
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                c.to_excel(w,  sheet_name="Coffee",   index=False)
+                ch.to_excel(w, sheet_name="Chicory",  index=False)
+                e.to_excel(w,  sheet_name="Excluded", index=False)
+            buf.seek(0)
 
-    c,ch,e = process_file(f,excl_df)
-
-    buf = io.BytesIO()
-
-    with pd.ExcelWriter(buf) as w:
-        c.to_excel(w,"Coffee",index=False)
-        ch.to_excel(w,"Chicory",index=False)
-        e.to_excel(w,"Excluded",index=False)
-
-    st.download_button("Download",buf,f.name)
-```
+            st.download_button(
+                label=f"Download {f.name}",
+                data=buf,
+                file_name=f"MT_CLEANED_{f.name}",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
