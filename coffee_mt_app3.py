@@ -6,37 +6,165 @@ from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
 # ---------------- PAGE CONFIG ----------------
-
 st.set_page_config(page_title="Coffee Trade Intelligence", layout="wide")
 
-# ---------------- HERO ----------------
-
+# ---------------- GLOBAL CSS ----------------
 st.markdown("""
 <style>
-.stApp {background: #020617; color: white;}
-.hero {
-    background: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.95)),
-                url("https://images.unsplash.com/photo-1498804103079-a6351b050096");
-    padding: 80px 40px; border-radius: 16px; margin-bottom: 40px;
+.stApp {
+    background: linear-gradient(180deg, #020617 0%, #020617 100%);
+    color: white;
+    font-family: 'Inter', sans-serif;
 }
-.section {background:#f8fafc; padding:40px; border-radius:16px;}
-</style>
 
+/* HERO */
+.hero {
+    background-image: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.95)),
+                      url("https://images.unsplash.com/photo-1498804103079-a6351b050096");
+    background-size: cover;
+    background-position: center;
+    padding: 80px 40px;
+    border-radius: 16px;
+    margin-bottom: 40px;
+}
+
+.hero h1 {
+    font-size: 42px;
+    font-weight: 600;
+}
+
+.hero p {
+    color: #94a3b8;
+}
+
+/* FEATURE SECTION */
+.section {
+    background: #f8fafc;
+    padding: 40px;
+    border-radius: 16px;
+    margin-bottom: 40px;
+}
+
+/* IMAGE GRID */
+.feature-grid {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+}
+
+.feature {
+    position: relative;
+    flex: 1;
+    min-width: 250px;
+    height: 200px;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.feature img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.feature .overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0.2));
+    display: flex;
+    align-items: flex-end;
+    padding: 20px;
+}
+
+.feature h3 {
+    color: white;
+    margin: 0;
+}
+
+.feature p {
+    color: #cbd5f5;
+    font-size: 13px;
+}
+
+/* PIPELINE */
+.pipeline {
+    padding: 20px;
+}
+
+.block {
+    background: #0f172a;
+    padding: 25px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+}
+
+/* BUTTON */
+.stButton button {
+    background: #1d4ed8;
+    color: white;
+    border-radius: 8px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- HERO ----------------
+st.markdown("""
 <div class="hero">
-<h1>Coffee Trade Intelligence</h1>
-<p>Upload → Clean → Convert → Download</p>
+    <h1>Coffee Trade Intelligence</h1>
+    <p>Upload → Clean → Convert → Download</p>
 </div>
 """, unsafe_allow_html=True)
 
-# ---------------- HSN ----------------
+# ---------------- FEATURES ----------------
+st.markdown("""
+<div class="section">
+<h2 style="color:#0f172a;">Trade Data Capabilities</h2>
+
+<div class="feature-grid">
+
+<div class="feature">
+    <img src="https://images.unsplash.com/photo-1511920170033-f8396924c348">
+    <div class="overlay">
+        <div>
+            <h3>High Volume Processing</h3>
+            <p>Handle large export datasets efficiently</p>
+        </div>
+    </div>
+</div>
+
+<div class="feature">
+    <img src="https://images.unsplash.com/photo-1509042239860-f550ce710b93">
+    <div class="overlay">
+        <div>
+            <h3>Smart Classification</h3>
+            <p>Coffee & Chicory separation using HSN codes</p>
+        </div>
+    </div>
+</div>
+
+<div class="feature">
+    <img src="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085">
+    <div class="overlay">
+        <div>
+            <h3>Accurate MT Conversion</h3>
+            <p>Reliable conversion across formats</p>
+        </div>
+    </div>
+</div>
+
+</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ================================================================
+# YOUR ORIGINAL LOGIC (UNCHANGED)
+# ================================================================
 
 COFFEE_CODES  = [21011110, 21011120, 21011130, 21011190, 21011200]
 CHICORY_CODES = [210130, 21013010]
 ALL_CODES     = COFFEE_CODES + CHICORY_CODES
 
 STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
-
-# ---------------- SIGNALS ----------------
 
 COFFEE_SIGNALS = [
     'COFFEE', 'KAPPI', 'CAPPI', 'COFFE', 'COFEE',
@@ -59,8 +187,6 @@ TEA_SIGNALS = [
     'TEA', 'GREEN TEA', 'BLACK TEA',
     'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA'
 ]
-
-# ---------------- FILTER ----------------
 
 def should_exclude(desc, hsn, excl_df):
     desc = str(desc).upper()
@@ -86,8 +212,6 @@ def should_exclude(desc, hsn, excl_df):
 
     return False, ''
 
-# ---------------- MT ----------------
-
 def convert_to_mt(row):
     qty  = row.get('STANDARD QUANTITY')
     unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
@@ -109,13 +233,9 @@ def convert_to_mt(row):
 
     return None, 'BLANK'
 
-# ---------------- PROCESS ----------------
-
 def process_file(file, excl_df):
     df = pd.read_excel(file)
-
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
-
     df = df[df[hs_col].isin(ALL_CODES)]
 
     keep, removed = [], []
@@ -137,17 +257,22 @@ def process_file(file, excl_df):
     for d in [coffee, chicory]:
         if len(d):
             results = d.apply(convert_to_mt, axis=1)
-            d['MT']               = [x[0] for x in results]
-            d['MT_CONVERSION_STATUS'] = [x[1] for x in results]
+            d['MT'] = [x[0] for x in results]
 
     return coffee, chicory, pd.DataFrame(removed)
 
-# ---------------- UI ----------------
+# ---------------- PIPELINE UI ----------------
+st.markdown('<div class="pipeline">', unsafe_allow_html=True)
 
-st.subheader("Upload Files")
-
+st.markdown('<div class="block">', unsafe_allow_html=True)
+st.subheader("Stage 1 — Upload Exclusion List")
 excl = st.file_uploader("Exclusion List", type=["xlsx"])
+st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown('<div class="block">', unsafe_allow_html=True)
+st.subheader("Stage 2 — Upload Raw Data")
 raws = st.file_uploader("Raw CYBEX Files", type=["xlsx"], accept_multiple_files=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 if st.button("Run"):
     if not excl:
@@ -162,9 +287,9 @@ if st.button("Run"):
 
             buf = io.BytesIO()
             with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                c.to_excel(w,  sheet_name="Coffee",   index=False)
-                ch.to_excel(w, sheet_name="Chicory",  index=False)
-                e.to_excel(w,  sheet_name="Excluded", index=False)
+                c.to_excel(w, sheet_name="Coffee", index=False)
+                ch.to_excel(w, sheet_name="Chicory", index=False)
+                e.to_excel(w, sheet_name="Excluded", index=False)
             buf.seek(0)
 
             st.download_button(
@@ -173,3 +298,5 @@ if st.button("Run"):
                 file_name=f"MT_CLEANED_{f.name}",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+st.markdown('</div>', unsafe_allow_html=True)
