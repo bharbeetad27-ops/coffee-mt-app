@@ -144,16 +144,19 @@ TEA_SIGNALS = [
 ]
 
 # ---- Pre-compiled regex patterns ----
-KG_X_N_PATTERN    = re.compile(r'([\d.]+)\s*KG\s*[X*]\s*([\d.]+)',              re.IGNORECASE)  # 1 KG X 16
-N_X_KG_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*KG',              re.IGNORECASE)  # 16X1KG
-ML_X_N_PATTERN    = re.compile(r'([\d.]+)\s*ML\s*[X*]\s*([\d.]+)',              re.IGNORECASE)  # 180ML X 30
-N_X_ML_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*ML',              re.IGNORECASE)  # 30X180ML
-BRACKET_PATTERN   = re.compile(r'(\d+)\s*\(\s*(\d+)\s*[X*]\s*([\d.]+)\s*G\s*\)', re.IGNORECASE) # 10(48X16G)
-MULTI_G_PATTERN   = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*G',              re.IGNORECASE)  # 6X180G
-SINGLE_KG_PATTERN = re.compile(r'([\d.]+)\s*KG',                                re.IGNORECASE)  # 20KG
-SINGLE_ML_PATTERN = re.compile(r'([\d.]+)\s*ML',                                re.IGNORECASE)  # 200ML
-SINGLE_G_PATTERN  = re.compile(r'([\d.]+)\s*G',                                 re.IGNORECASE)  # 45G
+KG_X_N_PATTERN    = re.compile(r'([\d.]+)\s*KG\s*[X*]\s*([\d.]+)',               re.IGNORECASE)
+N_X_KG_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*KG',               re.IGNORECASE)
+ML_X_N_PATTERN    = re.compile(r'([\d.]+)\s*ML\s*[X*]\s*([\d.]+)',               re.IGNORECASE)
+N_X_ML_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*ML',               re.IGNORECASE)
+BRACKET_PATTERN   = re.compile(r'(\d+)\s*\(\s*(\d+)\s*[X*]\s*([\d.]+)\s*G\s*\)', re.IGNORECASE)
+MULTI_G_PATTERN   = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*G',               re.IGNORECASE)
+MULTI_NO_G_PATTERN= re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)(?:\s+[A-Z]|\s*$)',  re.IGNORECASE)  # 12X100 with no G
+SINGLE_KG_PATTERN = re.compile(r'([\d.]+)\s*KG',                                 re.IGNORECASE)
+SINGLE_ML_PATTERN = re.compile(r'([\d.]+)\s*ML',                                 re.IGNORECASE)
+SINGLE_G_PATTERN  = re.compile(r'([\d.]+)\s*G',                                  re.IGNORECASE)
 
+# Words that indicate we've crossed into a different product in the description
+STOP_WORDS = ['MAGGI', 'FRW', 'EACH', 'WITH']
 # ================================================================
 # FUNCTIONS
 # ================================================================
@@ -207,57 +210,65 @@ def convert_to_mt(row):
 
     if unit in ('NOS', 'PCS', 'CTN'):
         try:
+            # Truncate desc at stop words to avoid picking up
+            # secondary product weights e.g. "WITH MAGGI 24X280G"
+            clean_desc = desc
+            for sw in STOP_WORDS:
+                idx = clean_desc.find(sw)
+                if idx != -1:
+                    clean_desc = clean_desc[:idx]
+
             # "1 KG X 16" or "1KG*16"
-            m = KG_X_N_PATTERN.search(desc)
+            m = KG_X_N_PATTERN.search(clean_desc)
             if m:
-                kg_each = float(m.group(1))
-                return qty * kg_each / 1000, 'PARSED'
+                return qty * float(m.group(1)) / 1000, 'PARSED'
 
             # "16X1KG" or "16*1KG"
-            m = N_X_KG_PATTERN.search(desc)
+            m = N_X_KG_PATTERN.search(clean_desc)
             if m:
-                kg_each = float(m.group(2))
-                return qty * kg_each / 1000, 'PARSED'
+                return qty * float(m.group(2)) / 1000, 'PARSED'
 
-            # "180ML X 30" or "0.180ML X 30"
-            m = ML_X_N_PATTERN.search(desc)
+            # "180ML X 30"
+            m = ML_X_N_PATTERN.search(clean_desc)
             if m:
-                ml_each = float(m.group(1))
-                return qty * ml_each / 1_000_000, 'PARSED'
+                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
             # "30X180ML"
-            m = N_X_ML_PATTERN.search(desc)
+            m = N_X_ML_PATTERN.search(clean_desc)
             if m:
-                ml_each = float(m.group(2))
-                return qty * ml_each / 1_000_000, 'PARSED'
+                return qty * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            # "10(48X16G)" → qty * 10 * 48 * 16g
-            m = BRACKET_PATTERN.search(desc)
+            # "10(48X16G)"
+            m = BRACKET_PATTERN.search(clean_desc)
             if m:
-                outer      = float(m.group(1))
-                inner_mult = float(m.group(2))
-                grams_each = float(m.group(3))
-                return qty * outer * inner_mult * grams_each / 1_000_000, 'PARSED'
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
 
-            # "6X180G", "36X24G", "12X100G"
-            m = MULTI_G_PATTERN.search(desc)
+            # "6X180G", "36X24G", "12X50G", "30X45G"
+            m = MULTI_G_PATTERN.search(clean_desc)
             if m:
-                multiplier = float(m.group(1))
-                grams_each = float(m.group(2))
-                return qty * multiplier * grams_each / 1_000_000, 'PARSED'
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            # "20KG" or "1 KG" alone
-            m = SINGLE_KG_PATTERN.search(desc)
+            # "12X100" with no G (assume grams)
+            m = MULTI_NO_G_PATTERN.search(clean_desc)
+            if m:
+                val1 = float(m.group(1))
+                val2 = float(m.group(2))
+                # Sanity check: if val2 looks like grams (< 2000), treat as grams
+                if val2 < 2000:
+                    return qty * val1 * val2 / 1_000_000, 'PARSED'
+
+            # "20KG" alone
+            m = SINGLE_KG_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1000, 'PARSED'
 
             # "200ML" alone
-            m = SINGLE_ML_PATTERN.search(desc)
+            m = SINGLE_ML_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
             # "45G" fallback
-            m = SINGLE_G_PATTERN.search(desc)
+            m = SINGLE_G_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
@@ -265,7 +276,6 @@ def convert_to_mt(row):
             return None, 'BLANK'
 
     return None, 'BLANK'
-
 
 @st.cache_data
 def load_exclusion_list(file):
