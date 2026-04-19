@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+from openpyxl import load_workbook
 from openpyxl.styles import PatternFill, Font, Alignment
 from openpyxl.utils import get_column_letter
 
@@ -16,8 +17,6 @@ st.markdown("""
     color: white;
     font-family: 'Inter', sans-serif;
 }
-
-/* HERO */
 .hero {
     background-image: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.95)),
                       url("https://images.unsplash.com/photo-1498804103079-a6351b050096");
@@ -27,31 +26,15 @@ st.markdown("""
     border-radius: 16px;
     margin-bottom: 40px;
 }
-
-.hero h1 {
-    font-size: 42px;
-    font-weight: 600;
-}
-
-.hero p {
-    color: #94a3b8;
-}
-
-/* FEATURE SECTION */
+.hero h1 { font-size: 42px; font-weight: 600; }
+.hero p  { color: #94a3b8; }
 .section {
     background: #f8fafc;
     padding: 40px;
     border-radius: 16px;
     margin-bottom: 40px;
 }
-
-/* IMAGE GRID */
-.feature-grid {
-    display: flex;
-    gap: 20px;
-    flex-wrap: wrap;
-}
-
+.feature-grid { display: flex; gap: 20px; flex-wrap: wrap; }
 .feature {
     position: relative;
     flex: 1;
@@ -60,13 +43,7 @@ st.markdown("""
     border-radius: 12px;
     overflow: hidden;
 }
-
-.feature img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
+.feature img { width: 100%; height: 100%; object-fit: cover; }
 .feature .overlay {
     position: absolute;
     inset: 0;
@@ -75,30 +52,15 @@ st.markdown("""
     align-items: flex-end;
     padding: 20px;
 }
-
-.feature h3 {
-    color: white;
-    margin: 0;
-}
-
-.feature p {
-    color: #cbd5f5;
-    font-size: 13px;
-}
-
-/* PIPELINE */
-.pipeline {
-    padding: 20px;
-}
-
+.feature h3 { color: white; margin: 0; }
+.feature p  { color: #cbd5f5; font-size: 13px; }
+.pipeline   { padding: 20px; }
 .block {
     background: #0f172a;
     padding: 25px;
     border-radius: 12px;
     margin-bottom: 20px;
 }
-
-/* BUTTON */
 .stButton button {
     background: #1d4ed8;
     color: white;
@@ -119,37 +81,30 @@ st.markdown("""
 st.markdown("""
 <div class="section">
 <h2 style="color:#0f172a;">Trade Data Capabilities</h2>
-
 <div class="feature-grid">
 
 <div class="feature">
     <img src="https://images.unsplash.com/photo-1511920170033-f8396924c348">
-    <div class="overlay">
-        <div>
-            <h3>High Volume Processing</h3>
-            <p>Handle large export datasets efficiently</p>
-        </div>
-    </div>
+    <div class="overlay"><div>
+        <h3>High Volume Processing</h3>
+        <p>Handle large export datasets efficiently</p>
+    </div></div>
 </div>
 
 <div class="feature">
     <img src="https://images.unsplash.com/photo-1509042239860-f550ce710b93">
-    <div class="overlay">
-        <div>
-            <h3>Smart Classification</h3>
-            <p>Coffee & Chicory separation using HSN codes</p>
-        </div>
-    </div>
+    <div class="overlay"><div>
+        <h3>Smart Classification</h3>
+        <p>Coffee & Chicory separation using HSN codes</p>
+    </div></div>
 </div>
 
 <div class="feature">
     <img src="https://images.unsplash.com/photo-1495474472287-4d71bcdd2085">
-    <div class="overlay">
-        <div>
-            <h3>Accurate MT Conversion</h3>
-            <p>Reliable conversion across formats</p>
-        </div>
-    </div>
+    <div class="overlay"><div>
+        <h3>Accurate MT Conversion</h3>
+        <p>Reliable conversion across formats</p>
+    </div></div>
 </div>
 
 </div>
@@ -157,7 +112,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================================================================
-# LOGIC
+# CONSTANTS
 # ================================================================
 
 COFFEE_CODES  = [21011110, 21011120, 21011130, 21011190, 21011200]
@@ -188,9 +143,16 @@ TEA_SIGNALS = [
     'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA'
 ]
 
+# Pre-compiled regex for speed
+GRAMS_PATTERN = re.compile(r'([\d.]+)\s*G')
+
+# ================================================================
+# FUNCTIONS
+# ================================================================
+
 def should_exclude(desc, hsn, excl_df):
     desc = str(desc).upper()
-    hsn = int(hsn) if pd.notna(hsn) else 0
+    hsn  = int(hsn) if pd.notna(hsn) else 0
 
     if hsn in STRICT_COFFEE_CHECK_CODES:
         strong = any(s in desc for s in COFFEE_SIGNALS)
@@ -211,6 +173,7 @@ def should_exclude(desc, hsn, excl_df):
             return True, r['REASON']
 
     return False, ''
+
 
 def convert_to_mt(row):
     qty  = row.get('STANDARD QUANTITY')
@@ -235,7 +198,7 @@ def convert_to_mt(row):
         return qty / 1_000_000, 'DIRECT'
 
     if unit in ('NOS', 'PCS', 'CTN'):
-        m = re.search(r'([\d.]+)\s*G', desc)
+        m = GRAMS_PATTERN.search(desc)
         if m:
             try:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
@@ -244,35 +207,75 @@ def convert_to_mt(row):
 
     return None, 'BLANK'
 
+
+@st.cache_data
+def load_exclusion_list(file):
+    return pd.read_excel(file)
+
+
+@st.cache_data
+def load_raw_file(file):
+    return pd.read_excel(file)
+
+
 def process_file(file, excl_df):
-    df = pd.read_excel(file)
+    df     = load_raw_file(file)
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
-    df = df[df[hs_col].isin(ALL_CODES)]
+    df     = df[df[hs_col].isin(ALL_CODES)].copy()
 
-    keep, removed = [], []
+    # Vectorized exclusion (faster than iterrows)
+    results        = df.apply(lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1)
+    df['_excl']    = [x[0] for x in results]
+    df['_reason']  = [x[1] for x in results]
 
-    for _, r in df.iterrows():
-        ex, reason = should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df)
-        if ex:
-            r = r.copy()
-            r['REASON'] = reason
-            removed.append(r)
-        else:
-            keep.append(r)
+    removed           = df[df['_excl']].copy()
+    removed['REASON'] = removed['_reason']
+    keep              = df[~df['_excl']].copy()
 
-    df = pd.DataFrame(keep)
+    for col in ['_excl', '_reason']:
+        removed.drop(columns=[col], inplace=True, errors='ignore')
+        keep.drop(columns=[col], inplace=True, errors='ignore')
 
-    coffee  = df[df[hs_col].isin(COFFEE_CODES)].copy()
-    chicory = df[df[hs_col].isin(CHICORY_CODES)].copy()
+    coffee  = keep[keep[hs_col].isin(COFFEE_CODES)].copy()
+    chicory = keep[keep[hs_col].isin(CHICORY_CODES)].copy()
 
     for d in [coffee, chicory]:
         if len(d):
-            results = d.apply(convert_to_mt, axis=1)
-            d['MT'] = [x[0] for x in results]
+            mt_results  = d.apply(convert_to_mt, axis=1)
+            d['MT']     = [x[0] for x in mt_results]
+            d['STATUS'] = [x[1] for x in mt_results]
 
-    return coffee, chicory, pd.DataFrame(removed)
+    return coffee, chicory, removed
 
-# ---------------- PIPELINE UI ----------------
+
+def apply_header_colours(buf):
+    buf.seek(0)
+    wb = load_workbook(buf)
+
+    blue_fill  = PatternFill("solid", fgColor="1D4ED8")
+    green_fill = PatternFill("solid", fgColor="15803D")
+    white_font = Font(color="FFFFFF", bold=True)
+    center     = Alignment(horizontal="center")
+
+    for cell in wb["Coffee"][1]:
+        cell.fill      = blue_fill
+        cell.font      = white_font
+        cell.alignment = center
+
+    for cell in wb["Chicory"][1]:
+        cell.fill      = green_fill
+        cell.font      = white_font
+        cell.alignment = center
+
+    out = io.BytesIO()
+    wb.save(out)
+    out.seek(0)
+    return out
+
+# ================================================================
+# PIPELINE UI
+# ================================================================
+
 st.markdown('<div class="pipeline">', unsafe_allow_html=True)
 
 st.markdown('<div class="block">', unsafe_allow_html=True)
@@ -291,41 +294,24 @@ if st.button("Run"):
     elif not raws:
         st.error("Please upload at least one raw file.")
     else:
-        excl_df = pd.read_excel(excl)
+        excl_df = load_exclusion_list(excl)
 
         for f in raws:
-            c, ch, e = process_file(f, excl_df)
+            with st.spinner(f"Processing {f.name}..."):
+                c, ch, e = process_file(f, excl_df)
 
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                c.to_excel(w, sheet_name="Coffee", index=False)
-                ch.to_excel(w, sheet_name="Chicory", index=False)
-                e.to_excel(w, sheet_name="Excluded", index=False)
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                    c.to_excel(w,  sheet_name="Coffee",   index=False)
+                    ch.to_excel(w, sheet_name="Chicory",  index=False)
+                    e.to_excel(w,  sheet_name="Excluded", index=False)
 
-                wb = w.book
-
-                # --- Blue header for Coffee ---
-                coffee_ws = wb["Coffee"]
-                blue_fill = PatternFill("solid", fgColor="1D4ED8")
-                white_font = Font(color="FFFFFF", bold=True)
-                for cell in coffee_ws[1]:
-                    cell.fill = blue_fill
-                    cell.font = white_font
-                    cell.alignment = Alignment(horizontal="center")
-
-                # --- Green header for Chicory ---
-                chicory_ws = wb["Chicory"]
-                green_fill = PatternFill("solid", fgColor="15803D")
-                for cell in chicory_ws[1]:
-                    cell.fill = green_fill
-                    cell.font = white_font
-                    cell.alignment = Alignment(horizontal="center")
-
-            buf.seek(0)
+                # Apply colours AFTER ExcelWriter closes
+                final_buf = apply_header_colours(buf)
 
             st.download_button(
                 label=f"Download {f.name}",
-                data=buf,
+                data=final_buf,
                 file_name=f"MT_CLEANED_{f.name}",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
