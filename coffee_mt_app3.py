@@ -199,10 +199,10 @@ def convert_to_mt(row):
 
     try:
         qty = float(qty)
-    except (TypeError, ValueError):
+    except:
         return None, 'BLANK'
 
-    # --- Direct unit conversions ---
+    # ---------------- DIRECT UNITS ----------------
     if unit in ('KGS', 'KG'):
         return qty / 1000, 'DIRECT'
 
@@ -212,86 +212,75 @@ def convert_to_mt(row):
     if unit in ('ML', 'MLT'):
         return qty / 1_000_000, 'DIRECT'
 
-    # --- Parse from description for NOS/PCS/CTN ---
+    # ---------------- SMART PARSING ----------------
     if unit in ('NOS', 'PCS', 'CTN'):
+
         try:
-            # Truncate at stop words to ignore bundled secondary products
             clean_desc = desc
+
+            # REMOVE bundle junk (IMPORTANT FIX)
             for sw in STOP_WORDS:
-                idx = clean_desc.find(sw)
-                if idx != -1:
-                    clean_desc = clean_desc[:idx]
+                if sw in clean_desc:
+                    clean_desc = clean_desc.split(sw)[0]
 
-            # Pattern: "1 KG X 16" or "1KG*16"
-            m = KG_X_N_PATTERN.search(clean_desc)
+            # ---- HIGH CONFIDENCE PATTERNS ----
+
+            # 16X1KG
+            m = re.search(r'(\d+)\s*[X*]\s*(\d+(?:\.\d+)?)\s*KG', clean_desc)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
+
+            # 1KG X 16
+            m = re.search(r'(\d+(?:\.\d+)?)\s*KG\s*[X*]\s*(\d+)', clean_desc)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
+
+            # 6X180G
+            m = re.search(r'(\d+)\s*[X*]\s*(\d+(?:\.\d+)?)\s*G', clean_desc)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            # 10(48X16G)
+            m = re.search(r'(\d+)\((\d+)[X*](\d+(?:\.\d+)?)G\)', clean_desc)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
+
+            # 0.96 KGS NET
+            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1000, 'PARSED'
 
-            # Pattern: "16X1KG" or "16*1KG"
-            m = N_X_KG_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(2)) / 1000, 'PARSED'
-
-            # Pattern: "180ML X 30" or "0.180ML X 30"
-            m = ML_X_N_PATTERN.search(clean_desc)
+            # 40GRM
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GRM', clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            # Pattern: "30X180ML"
-            m = N_X_ML_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(2)) / 1_000_000, 'PARSED'
+            # ---- FALLBACK INTELLIGENCE (NEW FIX) ----
 
-            # Pattern: "10(48X16G)" → qty * outer * inner * grams
-            m = BRACKET_PATTERN.search(clean_desc)
-            if m:
-                outer      = float(m.group(1))
-                inner_mult = float(m.group(2))
-                grams_each = float(m.group(3))
-                return qty * outer * inner_mult * grams_each / 1_000_000, 'PARSED'
+            # ANY number + G anywhere
+            grams = re.findall(r'(\d+(?:\.\d+)?)\s*G', clean_desc)
+            if grams:
+                return qty * float(grams[-1]) / 1_000_000, 'PARSED'
 
-            # Pattern: "6X180G", "36X24G", "12X50G"
-            m = MULTI_G_PATTERN.search(clean_desc)
-            if m:
-                multiplier = float(m.group(1))
-                grams_each = float(m.group(2))
-                return qty * multiplier * grams_each / 1_000_000, 'PARSED'
+            # ANY number + KG anywhere
+            kgs = re.findall(r'(\d+(?:\.\d+)?)\s*KG', clean_desc)
+            if kgs:
+                return qty * float(kgs[-1]) / 1000, 'PARSED'
 
-            # Pattern: "12X100" with no G — assume grams if second number < 2000
-            m = MULTI_NO_G_PATTERN.search(clean_desc)
-            if m:
-                val1 = float(m.group(1))
-                val2 = float(m.group(2))
-                if val2 < 2000:
-                    return qty * val1 * val2 / 1_000_000, 'PARSED'
+            # ANY number + ML
+            ml = re.findall(r'(\d+(?:\.\d+)?)\s*ML', clean_desc)
+            if ml:
+                return qty * float(ml[-1]) / 1_000_000, 'PARSED'
 
-            # Pattern: Galaxy brand "24 TIN EOEX40GRM=0.96 KGS NET"
-            # Try KGS NET first (most reliable for this format)
-            m = KGS_NET_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(1)) / 1000, 'PARSED'
+            # ---- SPECIAL CASE (CRITICAL FIX) ----
+            # Sachet / stick / premix fallback
 
-            # Pattern: "40GRM" — grams with GRM suffix
-            m = GRM_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
+            if any(x in clean_desc for x in ['SACHET', 'STICK', 'PREMIX']):
+                m = re.search(r'(\d+(?:\.\d+)?)\s*G', clean_desc)
+                if m:
+                    return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            # Pattern: "20KG" or "1 KG" alone
-            m = SINGLE_KG_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(1)) / 1000, 'PARSED'
-
-            # Pattern: "200ML" alone
-            m = SINGLE_ML_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
-
-            # Pattern: "45G" fallback — careful not to match GOLD, GRM etc.
-            m = SINGLE_G_PATTERN.search(clean_desc)
-            if m:
-                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
-
-        except (TypeError, ValueError):
+        except:
             return None, 'BLANK'
 
     return None, 'BLANK'
