@@ -289,11 +289,31 @@ if st.button("Run"):
             c, ch, e = process_file(f, excl_df)
 
             buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='openpyxl') as w:
-                c.to_excel(w, sheet_name="Coffee", index=False)
-                ch.to_excel(w, sheet_name="Chicory", index=False)
-                e.to_excel(w, sheet_name="Excluded", index=False)
-            buf.seek(0)
+with pd.ExcelWriter(buf, engine='openpyxl') as w:
+    c.to_excel(w, sheet_name="Coffee", index=False)
+    ch.to_excel(w, sheet_name="Chicory", index=False)
+    e.to_excel(w, sheet_name="Excluded", index=False)
+
+    wb = w.book
+
+    # --- Blue header for Coffee ---
+    coffee_ws = wb["Coffee"]
+    blue_fill = PatternFill("solid", fgColor="1D4ED8")
+    white_font = Font(color="FFFFFF", bold=True)
+    for cell in coffee_ws[1]:  # Row 1 = header
+        cell.fill = blue_fill
+        cell.font = white_font
+        cell.alignment = Alignment(horizontal="center")
+
+    # --- Green header for Chicory ---
+    chicory_ws = wb["Chicory"]
+    green_fill = PatternFill("solid", fgColor="15803D")
+    for cell in chicory_ws[1]:
+        cell.fill = green_fill
+        cell.font = white_font
+        cell.alignment = Alignment(horizontal="center")
+
+buf.seek(0)
 
             st.download_button(
                 label=f"Download {f.name}",
