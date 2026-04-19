@@ -201,20 +201,56 @@ def convert_to_mt(row):
 
     if unit in ('NOS', 'PCS', 'CTN'):
         try:
-            # Pattern 1: "1 KG X 16 NOS" → each unit is 1 KG
-            m = KG_MULTI_PATTERN.search(desc)
+            # "1 KG X 16" or "1KG*16"
+            m = KG_X_N_PATTERN.search(desc)
             if m:
                 kg_each = float(m.group(1))
                 return qty * kg_each / 1000, 'PARSED'
 
-            # Pattern 2: "6X180G" or "36X24G" → multiplier x grams
+            # "16X1KG" or "16*1KG"
+            m = N_X_KG_PATTERN.search(desc)
+            if m:
+                kg_each = float(m.group(2))
+                return qty * kg_each / 1000, 'PARSED'
+
+            # "0.180ML X 30" or "20ML X 36"
+            m = ML_X_N_PATTERN.search(desc)
+            if m:
+                ml_each = float(m.group(1))
+                return qty * ml_each / 1_000_000, 'PARSED'
+
+            # "30X180ML"
+            m = N_X_ML_PATTERN.search(desc)
+            if m:
+                ml_each = float(m.group(2))
+                return qty * ml_each / 1_000_000, 'PARSED'
+
+            # "10(48X16G)" → outer qty * 48 * 16g
+            m = BRACKET_PATTERN.search(desc)
+            if m:
+                outer      = float(m.group(1))
+                inner_mult = float(m.group(2))
+                grams_each = float(m.group(3))
+                return qty * outer * inner_mult * grams_each / 1_000_000, 'PARSED'
+
+            # "6X180G", "36X24G", "12X100G"
             m = MULTI_G_PATTERN.search(desc)
             if m:
                 multiplier = float(m.group(1))
                 grams_each = float(m.group(2))
                 return qty * multiplier * grams_each / 1_000_000, 'PARSED'
 
-            # Pattern 3: fallback "45G" → single gram weight
+            # "20KG" or "1 KG" alone
+            m = SINGLE_KG_PATTERN.search(desc)
+            if m:
+                return qty * float(m.group(1)) / 1000, 'PARSED'
+
+            # "200ML" alone
+            m = SINGLE_ML_PATTERN.search(desc)
+            if m:
+                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
+
+            # "45G" fallback
             m = SINGLE_G_PATTERN.search(desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
