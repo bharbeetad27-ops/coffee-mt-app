@@ -226,6 +226,9 @@ def convert_to_mt(row):
     if unit in ('MTS', 'MT'):
         return qty, 'DIRECT'
 
+    if unit in ('ML', 'MLT'):
+    return qty / 1_000_000, 'DIRECT'  # ML → L (/1000) → KG (*1) → MT (/1000)
+
     if unit in ('NOS', 'PCS', 'CTN'):
         m = re.search(r'([\d.]+)\s*G', desc)
         if m:
