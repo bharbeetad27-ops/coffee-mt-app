@@ -143,20 +143,23 @@ TEA_SIGNALS = [
     'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA'
 ]
 
-# ---- Pre-compiled regex patterns ----
-KG_X_N_PATTERN    = re.compile(r'([\d.]+)\s*KG\s*[X*]\s*([\d.]+)',               re.IGNORECASE)
-N_X_KG_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*KG',               re.IGNORECASE)
-ML_X_N_PATTERN    = re.compile(r'([\d.]+)\s*ML\s*[X*]\s*([\d.]+)',               re.IGNORECASE)
-N_X_ML_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*ML',               re.IGNORECASE)
-BRACKET_PATTERN   = re.compile(r'(\d+)\s*\(\s*(\d+)\s*[X*]\s*([\d.]+)\s*G\s*\)', re.IGNORECASE)
-MULTI_G_PATTERN   = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*G',               re.IGNORECASE)
-MULTI_NO_G_PATTERN= re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)(?:\s+[A-Z]|\s*$)',  re.IGNORECASE)  # 12X100 with no G
-SINGLE_KG_PATTERN = re.compile(r'([\d.]+)\s*KG',                                 re.IGNORECASE)
-SINGLE_ML_PATTERN = re.compile(r'([\d.]+)\s*ML',                                 re.IGNORECASE)
-SINGLE_G_PATTERN  = re.compile(r'([\d.]+)\s*G',                                  re.IGNORECASE)
+# Words that signal start of a secondary/bundled product — truncate here
+STOP_WORDS = ['WITH MAGGI', 'FRW', 'EACH', 'PR FRAPPE']
 
-# Words that indicate we've crossed into a different product in the description
-STOP_WORDS = ['MAGGI', 'FRW', 'EACH', 'WITH']
+# ---- Pre-compiled regex patterns (order matters — most specific first) ----
+KG_X_N_PATTERN    = re.compile(r'([\d.]+)\s*KG\s*[X*]\s*([\d.]+)',                re.IGNORECASE)  # 1 KG X 16
+N_X_KG_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*KG',                re.IGNORECASE)  # 16X1KG
+ML_X_N_PATTERN    = re.compile(r'([\d.]+)\s*ML\s*[X*]\s*([\d.]+)',                re.IGNORECASE)  # 180ML X 30
+N_X_ML_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*ML',                re.IGNORECASE)  # 30X180ML
+BRACKET_PATTERN   = re.compile(r'(\d+)\s*\(\s*(\d+)\s*[X*]\s*([\d.]+)\s*G\s*\)', re.IGNORECASE)  # 10(48X16G)
+MULTI_G_PATTERN   = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*G',                re.IGNORECASE)  # 6X180G
+MULTI_NO_G_PATTERN= re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)(?=\s|$|\b[^G])',     re.IGNORECASE)  # 12X100 no G
+KGS_NET_PATTERN   = re.compile(r'([\d.]+)\s*KGS?\s*NET',                          re.IGNORECASE)  # 0.96 KGS NET
+GRM_PATTERN       = re.compile(r'([\d.]+)\s*GRM',                                 re.IGNORECASE)  # 40GRM
+SINGLE_KG_PATTERN = re.compile(r'([\d.]+)\s*KG',                                  re.IGNORECASE)  # 20KG
+SINGLE_ML_PATTERN = re.compile(r'([\d.]+)\s*ML',                                  re.IGNORECASE)  # 200ML
+SINGLE_G_PATTERN  = re.compile(r'([\d.]+)\s*G(?!RM|OLD|OAL|IN)',                  re.IGNORECASE)  # 45G not GOLD/GRM
+
 # ================================================================
 # FUNCTIONS
 # ================================================================
@@ -199,6 +202,7 @@ def convert_to_mt(row):
     except (TypeError, ValueError):
         return None, 'BLANK'
 
+    # --- Direct unit conversions ---
     if unit in ('KGS', 'KG'):
         return qty / 1000, 'DIRECT'
 
@@ -208,66 +212,81 @@ def convert_to_mt(row):
     if unit in ('ML', 'MLT'):
         return qty / 1_000_000, 'DIRECT'
 
+    # --- Parse from description for NOS/PCS/CTN ---
     if unit in ('NOS', 'PCS', 'CTN'):
         try:
-            # Truncate desc at stop words to avoid picking up
-            # secondary product weights e.g. "WITH MAGGI 24X280G"
+            # Truncate at stop words to ignore bundled secondary products
             clean_desc = desc
             for sw in STOP_WORDS:
                 idx = clean_desc.find(sw)
                 if idx != -1:
                     clean_desc = clean_desc[:idx]
 
-            # "1 KG X 16" or "1KG*16"
+            # Pattern: "1 KG X 16" or "1KG*16"
             m = KG_X_N_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1000, 'PARSED'
 
-            # "16X1KG" or "16*1KG"
+            # Pattern: "16X1KG" or "16*1KG"
             m = N_X_KG_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(2)) / 1000, 'PARSED'
 
-            # "180ML X 30"
+            # Pattern: "180ML X 30" or "0.180ML X 30"
             m = ML_X_N_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            # "30X180ML"
+            # Pattern: "30X180ML"
             m = N_X_ML_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            # "10(48X16G)"
+            # Pattern: "10(48X16G)" → qty * outer * inner * grams
             m = BRACKET_PATTERN.search(clean_desc)
             if m:
-                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
+                outer      = float(m.group(1))
+                inner_mult = float(m.group(2))
+                grams_each = float(m.group(3))
+                return qty * outer * inner_mult * grams_each / 1_000_000, 'PARSED'
 
-            # "6X180G", "36X24G", "12X50G", "30X45G"
+            # Pattern: "6X180G", "36X24G", "12X50G"
             m = MULTI_G_PATTERN.search(clean_desc)
             if m:
-                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+                multiplier = float(m.group(1))
+                grams_each = float(m.group(2))
+                return qty * multiplier * grams_each / 1_000_000, 'PARSED'
 
-            # "12X100" with no G (assume grams)
+            # Pattern: "12X100" with no G — assume grams if second number < 2000
             m = MULTI_NO_G_PATTERN.search(clean_desc)
             if m:
                 val1 = float(m.group(1))
                 val2 = float(m.group(2))
-                # Sanity check: if val2 looks like grams (< 2000), treat as grams
                 if val2 < 2000:
                     return qty * val1 * val2 / 1_000_000, 'PARSED'
 
-            # "20KG" alone
+            # Pattern: Galaxy brand "24 TIN EOEX40GRM=0.96 KGS NET"
+            # Try KGS NET first (most reliable for this format)
+            m = KGS_NET_PATTERN.search(clean_desc)
+            if m:
+                return qty * float(m.group(1)) / 1000, 'PARSED'
+
+            # Pattern: "40GRM" — grams with GRM suffix
+            m = GRM_PATTERN.search(clean_desc)
+            if m:
+                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
+
+            # Pattern: "20KG" or "1 KG" alone
             m = SINGLE_KG_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1000, 'PARSED'
 
-            # "200ML" alone
+            # Pattern: "200ML" alone
             m = SINGLE_ML_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            # "45G" fallback
+            # Pattern: "45G" fallback — careful not to match GOLD, GRM etc.
             m = SINGLE_G_PATTERN.search(clean_desc)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
@@ -276,6 +295,7 @@ def convert_to_mt(row):
             return None, 'BLANK'
 
     return None, 'BLANK'
+
 
 @st.cache_data
 def load_exclusion_list(file):
@@ -292,7 +312,10 @@ def process_file(file, excl_df):
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
     df     = df[df[hs_col].isin(ALL_CODES)].copy()
 
-    results       = df.apply(lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1)
+    # Vectorized exclusion
+    results       = df.apply(
+        lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1
+    )
     df['_excl']   = [x[0] for x in results]
     df['_reason'] = [x[1] for x in results]
 
@@ -374,6 +397,7 @@ if st.button("Run"):
                     ch.to_excel(w, sheet_name="Chicory",  index=False)
                     e.to_excel(w,  sheet_name="Excluded", index=False)
 
+                # Apply colours AFTER ExcelWriter closes
                 final_buf = apply_header_colours(buf)
 
             st.download_button(
