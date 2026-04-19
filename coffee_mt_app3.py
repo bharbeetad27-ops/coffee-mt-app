@@ -143,8 +143,10 @@ TEA_SIGNALS = [
     'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA'
 ]
 
-# Pre-compiled regex for speed
-GRAMS_PATTERN = re.compile(r'([\d.]+)\s*G')
+# Pre-compiled regex patterns for speed
+KG_MULTI_PATTERN = re.compile(r'([\d.]+)\s*KG\s*X\s*([\d.]+)', re.IGNORECASE)  # e.g. 1 KG X 16
+MULTI_G_PATTERN  = re.compile(r'([\d.]+)\s*X\s*([\d.]+)\s*G',  re.IGNORECASE)  # e.g. 6X180G
+SINGLE_G_PATTERN = re.compile(r'([\d.]+)\s*G',                  re.IGNORECASE)  # e.g. 45G fallback
 
 # ================================================================
 # FUNCTIONS
@@ -198,12 +200,27 @@ def convert_to_mt(row):
         return qty / 1_000_000, 'DIRECT'
 
     if unit in ('NOS', 'PCS', 'CTN'):
-        m = GRAMS_PATTERN.search(desc)
-        if m:
-            try:
+        try:
+            # Pattern 1: "1 KG X 16 NOS" → each unit is 1 KG
+            m = KG_MULTI_PATTERN.search(desc)
+            if m:
+                kg_each = float(m.group(1))
+                return qty * kg_each / 1000, 'PARSED'
+
+            # Pattern 2: "6X180G" or "36X24G" → multiplier x grams
+            m = MULTI_G_PATTERN.search(desc)
+            if m:
+                multiplier = float(m.group(1))
+                grams_each = float(m.group(2))
+                return qty * multiplier * grams_each / 1_000_000, 'PARSED'
+
+            # Pattern 3: fallback "45G" → single gram weight
+            m = SINGLE_G_PATTERN.search(desc)
+            if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
-            except (TypeError, ValueError):
-                return None, 'BLANK'
+
+        except (TypeError, ValueError):
+            return None, 'BLANK'
 
     return None, 'BLANK'
 
@@ -224,9 +241,9 @@ def process_file(file, excl_df):
     df     = df[df[hs_col].isin(ALL_CODES)].copy()
 
     # Vectorized exclusion (faster than iterrows)
-    results        = df.apply(lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1)
-    df['_excl']    = [x[0] for x in results]
-    df['_reason']  = [x[1] for x in results]
+    results       = df.apply(lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1)
+    df['_excl']   = [x[0] for x in results]
+    df['_reason'] = [x[1] for x in results]
 
     removed           = df[df['_excl']].copy()
     removed['REASON'] = removed['_reason']
