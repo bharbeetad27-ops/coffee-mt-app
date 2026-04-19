@@ -143,10 +143,16 @@ TEA_SIGNALS = [
     'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA'
 ]
 
-# Pre-compiled regex patterns for speed
-KG_MULTI_PATTERN = re.compile(r'([\d.]+)\s*KG\s*X\s*([\d.]+)', re.IGNORECASE)  # e.g. 1 KG X 16
-MULTI_G_PATTERN  = re.compile(r'([\d.]+)\s*X\s*([\d.]+)\s*G',  re.IGNORECASE)  # e.g. 6X180G
-SINGLE_G_PATTERN = re.compile(r'([\d.]+)\s*G',                  re.IGNORECASE)  # e.g. 45G fallback
+# ---- Pre-compiled regex patterns ----
+KG_X_N_PATTERN    = re.compile(r'([\d.]+)\s*KG\s*[X*]\s*([\d.]+)',              re.IGNORECASE)  # 1 KG X 16
+N_X_KG_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*KG',              re.IGNORECASE)  # 16X1KG
+ML_X_N_PATTERN    = re.compile(r'([\d.]+)\s*ML\s*[X*]\s*([\d.]+)',              re.IGNORECASE)  # 180ML X 30
+N_X_ML_PATTERN    = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*ML',              re.IGNORECASE)  # 30X180ML
+BRACKET_PATTERN   = re.compile(r'(\d+)\s*\(\s*(\d+)\s*[X*]\s*([\d.]+)\s*G\s*\)', re.IGNORECASE) # 10(48X16G)
+MULTI_G_PATTERN   = re.compile(r'([\d.]+)\s*[X*]\s*([\d.]+)\s*G',              re.IGNORECASE)  # 6X180G
+SINGLE_KG_PATTERN = re.compile(r'([\d.]+)\s*KG',                                re.IGNORECASE)  # 20KG
+SINGLE_ML_PATTERN = re.compile(r'([\d.]+)\s*ML',                                re.IGNORECASE)  # 200ML
+SINGLE_G_PATTERN  = re.compile(r'([\d.]+)\s*G',                                 re.IGNORECASE)  # 45G
 
 # ================================================================
 # FUNCTIONS
@@ -213,7 +219,7 @@ def convert_to_mt(row):
                 kg_each = float(m.group(2))
                 return qty * kg_each / 1000, 'PARSED'
 
-            # "0.180ML X 30" or "20ML X 36"
+            # "180ML X 30" or "0.180ML X 30"
             m = ML_X_N_PATTERN.search(desc)
             if m:
                 ml_each = float(m.group(1))
@@ -225,7 +231,7 @@ def convert_to_mt(row):
                 ml_each = float(m.group(2))
                 return qty * ml_each / 1_000_000, 'PARSED'
 
-            # "10(48X16G)" → outer qty * 48 * 16g
+            # "10(48X16G)" → qty * 10 * 48 * 16g
             m = BRACKET_PATTERN.search(desc)
             if m:
                 outer      = float(m.group(1))
@@ -276,7 +282,6 @@ def process_file(file, excl_df):
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
     df     = df[df[hs_col].isin(ALL_CODES)].copy()
 
-    # Vectorized exclusion (faster than iterrows)
     results       = df.apply(lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1)
     df['_excl']   = [x[0] for x in results]
     df['_reason'] = [x[1] for x in results]
@@ -359,7 +364,6 @@ if st.button("Run"):
                     ch.to_excel(w, sheet_name="Chicory",  index=False)
                     e.to_excel(w,  sheet_name="Excluded", index=False)
 
-                # Apply colours AFTER ExcelWriter closes
                 final_buf = apply_header_colours(buf)
 
             st.download_button(
