@@ -230,6 +230,10 @@ def convert_to_mt(row):
         return qty / 1_000_000, 'DIRECT'
 
     if unit in ('NOS', 'PCS', 'CTN'):
+        try:
+            qty = float(qty)
+        except (TypeError, ValueError):
+            return None, 'BLANK'
         m = re.search(r'([\d.]+)\s*G', desc)
         if m:
             return qty * float(m.group(1)) / 1_000_000, 'PARSED'
