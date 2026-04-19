@@ -188,7 +188,6 @@ def should_exclude(desc, hsn, excl_df):
 
     return False, ''
 
-
 def convert_to_mt(row):
     qty  = row.get('STANDARD QUANTITY')
     unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
@@ -202,89 +201,89 @@ def convert_to_mt(row):
     except:
         return None, 'BLANK'
 
-    # ---------------- DIRECT UNITS ----------------
+    # ---------------- DIRECT ----------------
     if unit in ('KGS', 'KG'):
         return qty / 1000, 'DIRECT'
 
     if unit in ('MTS', 'MT'):
         return qty, 'DIRECT'
 
-    if unit in ('ML', 'MLT'):
+    if unit in ('ML', 'MLT', 'LTR'):
         return qty / 1_000_000, 'DIRECT'
 
-    # ---------------- SMART PARSING ----------------
-    if unit in ('NOS', 'PCS', 'CTN'):
+    # ---------------- PARSING ----------------
+    if unit in ('NOS', 'PCS', 'CTM', 'CTN'):
 
         try:
-            clean_desc = desc
+            clean = desc
 
-            # REMOVE bundle junk (IMPORTANT FIX)
+            # Remove junk after bundle words
             for sw in STOP_WORDS:
-                if sw in clean_desc:
-                    clean_desc = clean_desc.split(sw)[0]
+                if sw in clean:
+                    clean = clean.split(sw)[0]
 
-            # ---- HIGH CONFIDENCE PATTERNS ----
+            # Normalize spacing
+            clean = clean.replace(" X ", "X").replace("*", "X")
+
+            # ---------- BEST PATTERNS ----------
+
+            # 10(48X16G)
+            m = re.search(r'(\d+)\((\d+)X(\d+(?:\.\d+)?)G\)', clean)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
 
             # 16X1KG
-            m = re.search(r'(\d+)\s*[X*]\s*(\d+(?:\.\d+)?)\s*KG', clean_desc)
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)KG', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
 
-            # 1KG X 16
-            m = re.search(r'(\d+(?:\.\d+)?)\s*KG\s*[X*]\s*(\d+)', clean_desc)
+            # 1KGX16
+            m = re.search(r'(\d+(?:\.\d+)?)KGX(\d+)', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
 
             # 6X180G
-            m = re.search(r'(\d+)\s*[X*]\s*(\d+(?:\.\d+)?)\s*G', clean_desc)
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)G', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            # 10(48X16G)
-            m = re.search(r'(\d+)\((\d+)[X*](\d+(?:\.\d+)?)G\)', clean_desc)
+            # 36X24 (assume grams if reasonable)
+            m = re.search(r'(\d+)X(\d+)(?![A-Z])', clean)
             if m:
-                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
+                val2 = float(m.group(2))
+                if val2 < 2000:
+                    return qty * float(m.group(1)) * val2 / 1_000_000, 'PARSED'
 
             # 0.96 KGS NET
-            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean_desc)
+            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean)
             if m:
                 return qty * float(m.group(1)) / 1000, 'PARSED'
 
             # 40GRM
-            m = re.search(r'(\d+(?:\.\d+)?)\s*GRM', clean_desc)
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GRM', clean)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            # ---- FALLBACK INTELLIGENCE (NEW FIX) ----
+            # ---------- FALLBACK ----------
 
-            # ANY number + G anywhere
-            grams = re.findall(r'(\d+(?:\.\d+)?)\s*G', clean_desc)
+            grams = re.findall(r'(\d+(?:\.\d+)?)\s*G', clean)
             if grams:
                 return qty * float(grams[-1]) / 1_000_000, 'PARSED'
 
-            # ANY number + KG anywhere
-            kgs = re.findall(r'(\d+(?:\.\d+)?)\s*KG', clean_desc)
-            if kgs:
-                return qty * float(kgs[-1]) / 1000, 'PARSED'
+            kg = re.findall(r'(\d+(?:\.\d+)?)\s*KG', clean)
+            if kg:
+                return qty * float(kg[-1]) / 1000, 'PARSED'
 
-            # ANY number + ML
-            ml = re.findall(r'(\d+(?:\.\d+)?)\s*ML', clean_desc)
+            ml = re.findall(r'(\d+(?:\.\d+)?)\s*ML', clean)
             if ml:
                 return qty * float(ml[-1]) / 1_000_000, 'PARSED'
-
-            # ---- SPECIAL CASE (CRITICAL FIX) ----
-            # Sachet / stick / premix fallback
-
-            if any(x in clean_desc for x in ['SACHET', 'STICK', 'PREMIX']):
-                m = re.search(r'(\d+(?:\.\d+)?)\s*G', clean_desc)
-                if m:
-                    return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
         except:
             return None, 'BLANK'
 
     return None, 'BLANK'
 
+    
 
 @st.cache_data
 def load_exclusion_list(file):
