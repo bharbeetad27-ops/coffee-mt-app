@@ -27,6 +27,12 @@ st.markdown("""
 }
 .hero h1 { font-size: 42px; font-weight: 600; }
 .hero p { color: #94a3b8; }
+.section {
+ background: #f8fafc;
+ padding: 40px;
+ border-radius: 16px;
+ margin-bottom: 40px;
+}
 .pipeline { padding: 20px; }
 .block {
  background: #0f172a;
@@ -54,121 +60,36 @@ st.markdown("""
 # CONSTANTS
 # ================================================================
 COFFEE_CODES = [21011110, 21011120, 21011130, 21011190, 21011200]
-CHICORY_CODES = [21013010, 21013090]
 
-CANDIDATE_CODES = [
-    9019090, 9019020, 9019010, 9012190, 9012290,
-    9011119, 9011129,
-    21039040, 21012090, 21069099
+STRONG_SIGNALS = [
+    "INSTANT", "SOLUBLE", "AGGLOMERATED",
+    "SPRAY DRIED", "FREEZE DRIED", "EXTRACT"
 ]
 
-ALL_CODES = COFFEE_CODES + CHICORY_CODES + CANDIDATE_CODES
-STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
-
-COFFEE_SIGNALS = [
-    'COFFEE', 'KAPPI', 'CAPPI', 'COFFE', 'COFEE',
-    'CAPPUCCINO', 'LATTE', 'ESPRESSO',
-    'NESCAFE', 'BRU', 'LEVISTA', 'DAVIDOFF',
-    'CAFÉ', 'CAFE'
-]
-
-WEAK_COFFEE_SIGNALS = [
-    'PREMIX', 'PRE-MIX', '3 IN 1', '2 IN 1',
-    'SACHET', 'MIX', 'VENDING MIX'
-]
-
-TEA_SIGNALS = [
-    'TEA', 'GREEN TEA', 'BLACK TEA',
-    'MASALA TEA', 'CHAI'
-]
-
-TRUE_SOLUBLE_SIGNALS = [
-    'INSTANT', 'SOLUBLE', 'AGGLOMERATED',
-    'SPRAY DRIED', 'FREEZE DRIED'
-]
-
-RAW_BEAN_SIGNALS = [
-    'NOT ROASTED', 'GREEN BEAN', 'ARABICA',
-    'ROBUSTA', 'CHERRY', 'PLANTATION'
-]
-
-HARD_EXCLUDE_SIGNALS = [
-    'CHUKKU',
-    'SUKKU',
-    'MALLI',
-    'GINGER COFFEE',
-    'HERBAL EXTRACT'
+HARD_EXCLUDE = [
+    "TEA", "CHAI",
+    "CHUKKU", "SUKKU", "MALLI",
+    "GINGER", "HERBAL",
+    "DOSA", "IDLI", "UPMA",
+    "JAMUN", "JALEBI"
 ]
 
 # ================================================================
-# EXCLUSION LOGIC
+# VALIDATION FUNCTION
 # ================================================================
-def should_exclude(desc, hsn, excl_df):
+def is_valid_soluble(desc):
     desc = str(desc).upper()
 
-    try:
-        hsn = int(hsn) if pd.notna(hsn) else 0
-    except:
-        hsn = 0
+    if "COFFEE" not in desc:
+        return False
 
-    # Hard exclusion first
-    if any(x in desc for x in HARD_EXCLUDE_SIGNALS):
-        return True, 'Hard excluded'
+    if not any(x in desc for x in STRONG_SIGNALS):
+        return False
 
-    # Exclusion list second
-    for _, r in excl_df.iterrows():
-        if r['MATCH_TYPE'] == 'CONTAINS' and r['KEYWORD'] in desc:
-            return True, r['REASON']
+    if any(x in desc for x in HARD_EXCLUDE):
+        return False
 
-    # Allow chicory codes
-    if hsn in CHICORY_CODES:
-        return False, ''
-
-    # Strict coffee validation
-    if hsn in STRICT_COFFEE_CHECK_CODES:
-        strong = any(s in desc for s in COFFEE_SIGNALS)
-        weak = any(s in desc for s in WEAK_COFFEE_SIGNALS)
-        tea = any(s in desc for s in TEA_SIGNALS)
-
-        if any(s in desc for s in TRUE_SOLUBLE_SIGNALS):
-            return False, ''
-
-        if strong:
-            return False, ''
-        elif tea:
-            return True, 'Tea detected'
-        elif weak:
-            return False, 'Premix assumed coffee'
-        else:
-            return True, 'No coffee signal'
-
-    return False, ''
-
-# ================================================================
-# CANDIDATE CLASSIFIER
-# ================================================================
-def classify_candidate(desc):
-    desc = str(desc).upper()
-
-    if any(x in desc for x in HARD_EXCLUDE_SIGNALS):
-        return 'EXCLUDE'
-
-    if any(r in desc for r in RAW_BEAN_SIGNALS):
-        return 'EXCLUDE'
-
-    if 'TEA PREMIX' in desc and 'COFFEE' in desc:
-        return 'EXCLUDE'
-
-    if 'CHICORY' in desc:
-        return 'CHICORY'
-
-    if any(s in desc for s in TRUE_SOLUBLE_SIGNALS):
-        return 'COFFEE'
-
-    if any(s in desc for s in COFFEE_SIGNALS):
-        return 'COFFEE'
-
-    return 'EXCLUDE'
+    return True
 
 # ================================================================
 # MT CONVERSION (UNCHANGED)
@@ -211,69 +132,60 @@ def convert_to_mt(row):
     return None, 'BLANK'
 
 # ================================================================
-# PROCESS FILE
+# PROCESS FUNCTION
 # ================================================================
-def process_file(file, excl_df):
+def process_file(file):
     df = pd.read_excel(file)
 
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
-
     df[hs_col] = pd.to_numeric(df[hs_col], errors='coerce')
-    df = df[df[hs_col].isin(ALL_CODES)].copy()
 
-    primary_mask = df[hs_col].isin(COFFEE_CODES + CHICORY_CODES)
-    candidate_mask = df[hs_col].isin(CANDIDATE_CODES)
+    # Clean description
+    df["DESC"] = df["PRODUCT DESCRIPTION"].astype(str).str.upper()
 
-    primary_df = df[primary_mask].copy()
-    candidate_df = df[candidate_mask].copy()
+    # Flags
+    df["IS_HS_COFFEE"] = df[hs_col].isin(COFFEE_CODES)
+    df["IS_SOLUBLE"] = df["DESC"].apply(is_valid_soluble)
 
-    results = primary_df.apply(
-        lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1
+    # Combine logic
+    df["FINAL_INCLUDE"] = df["IS_HS_COFFEE"] | df["IS_SOLUBLE"]
+
+    # Remove junk even inside correct HS
+    df.loc[df["IS_HS_COFFEE"], "FINAL_INCLUDE"] = df.apply(
+        lambda r: False if any(x in r["DESC"] for x in HARD_EXCLUDE) else True,
+        axis=1
     )
 
-    primary_df['_excl'] = [x[0] for x in results]
-    primary_df['_reason'] = [x[1] for x in results]
+    coffee = df[df["FINAL_INCLUDE"]].copy()
+    removed = df[~df["FINAL_INCLUDE"]].copy()
 
-    removed = primary_df[primary_df['_excl']].copy()
-    keep = primary_df[~primary_df['_excl']].copy()
+    # Misclassified coffee
+    wrong_hs = coffee[~coffee[hs_col].isin(COFFEE_CODES)].copy()
 
-    coffee = keep[keep[hs_col].isin(COFFEE_CODES)].copy()
-    chicory = keep[keep[hs_col].isin(CHICORY_CODES)].copy()
+    # MT conversion
+    if len(coffee):
+        mt = coffee.apply(convert_to_mt, axis=1)
+        coffee["MT"] = [x[0] for x in mt]
+        coffee["STATUS"] = [x[1] for x in mt]
 
-    if not candidate_df.empty:
-        candidate_df['_class'] = candidate_df['PRODUCT DESCRIPTION'].apply(classify_candidate)
-
-        coffee = pd.concat([coffee, candidate_df[candidate_df['_class'] == 'COFFEE']], ignore_index=True)
-        chicory = pd.concat([chicory, candidate_df[candidate_df['_class'] == 'CHICORY']], ignore_index=True)
-        removed = pd.concat([removed, candidate_df[candidate_df['_class'] == 'EXCLUDE']], ignore_index=True)
-
-    for d in [coffee, chicory]:
-        if len(d):
-            mt = d.apply(convert_to_mt, axis=1)
-            d['MT'] = [x[0] for x in mt]
-            d['STATUS'] = [x[1] for x in mt]
-
-    return coffee, chicory, removed
+    return coffee, removed, wrong_hs
 
 # ================================================================
-# UI PIPELINE
+# UI PIPELINE (UNCHANGED)
 # ================================================================
 st.markdown('<div class="pipeline">', unsafe_allow_html=True)
 
-excl = st.file_uploader("Exclusion List", type=["xlsx"])
 raws = st.file_uploader("Raw Files", type=["xlsx"], accept_multiple_files=True)
 
 if st.button("Run"):
-    excl_df = pd.read_excel(excl)
-
     for f in raws:
-        c, ch, e = process_file(f, excl_df)
+        c, e, w = process_file(f)
 
         buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine='openpyxl') as w:
-            c.to_excel(w, sheet_name="Coffee", index=False)
-            ch.to_excel(w, sheet_name="Chicory", index=False)
-            e.to_excel(w, sheet_name="Excluded", index=False)
+        with pd.ExcelWriter(buf, engine='openpyxl') as writer:
+            c.to_excel(writer, sheet_name="Coffee", index=False)
+            e.to_excel(writer, sheet_name="Excluded", index=False)
+            w.to_excel(writer, sheet_name="Wrong HS Coffee", index=False)
 
         st.download_button(
             label=f"Download {f.name}",
