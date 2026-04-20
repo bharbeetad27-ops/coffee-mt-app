@@ -107,49 +107,59 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ================================================================
-# CONSTANTS
+# CONSTANTS — all HS codes stored as zero-padded 8-char STRINGS
 # ================================================================
+# Root cause of the original bug: Excel stores HS codes as floats
+# (21011130.0) or strips leading zeros ("9019090"). Comparing those
+# against a list of Python ints with isin() fails silently.
+# Solution: normalise everything to 8-char strings at load time.
 
-# Primary correctly-classified HS codes
-COFFEE_CODES = [21011110, 21011120, 21011130, 21011190, 21011200]
+COFFEE_CODES = [
+    '21011110',
+    '21011120',
+    '21011130',   # was silently dropped in previous version
+    '21011190',
+    '21011200',
+]
 
-# FIX 3: Both 8-digit chicory codes (previously 210130 was incomplete/6-digit)
-CHICORY_CODES = [21013010, 21013090]
+CHICORY_CODES = [
+    '21013010',
+    '21013090',   # was previously '210130' (6-digit, never matched)
+]
 
-# FIX 1: Candidate pool — codes that frequently contain misclassified
-# soluble coffee or chicory products. These are pulled in for
-# description-level intelligence rather than being dropped upfront.
+# Candidate pool — HS codes known to contain misclassified soluble
+# coffee or chicory products. Included in the initial pull so
+# description-level logic can decide what to keep.
 CANDIDATE_CODES = [
-    9019090,   # "other coffee" residue — chukku kappi, ginger coffee granules
-    9019020,   # roasted/other coffee — BRU, chukku kappi, ginger coffee
-    9019010,   # coffee husks — palat ginger coffee, pavan chukke kappi
-    9012190,   # roasted coffee — filter/ground coffee powders (kaapi, cothas)
-    9012290,   # decaffeinated roasted — coffee powder
-    9011119,   # other arabica — coffee powder mixed with raw grades
-    9011129,   # arabica cherry A — coffee powder bottles mixed with beans
-    21039040,  # condiments — nellara wayanadan coffee, chukku kappi
-    9101190,   # spice extracts — rajam chukku coffee powder
-    9101290,   # ginger extracts — chukku mix, rajam sukku coffee
-    9109929,   # mixed spices — chukku malli kappi
-    9109100,   # curry/spice mixes — vijay ginger coffee chukku kappi
-    9024030,   # tea — nadan chukkukappi, ginger coffee
-    21012090,  # tea extracts — amazon coffee premix, instant coffee premix
-    21069099,  # misc food — rajam sukku coffee, bimah karupatti coffee premix
+    '09019090',  # "other coffee" residue — chukku kappi, ginger coffee granules
+    '09019020',  # roasted/other coffee — BRU, chukku kappi, ginger coffee
+    '09019010',  # coffee husks — palat ginger coffee, pavan chukke kappi
+    '09012190',  # roasted coffee — filter/ground coffee powders (kaapi, cothas)
+    '09012290',  # decaffeinated roasted — coffee powder
+    '09011119',  # other arabica — coffee powder mixed with raw grades
+    '09011129',  # arabica cherry A — coffee powder bottles mixed with beans
+    '21039040',  # condiments — nellara wayanadan coffee, chukku kappi
+    '09101190',  # spice extracts — rajam chukku coffee powder
+    '09101290',  # ginger extracts — chukku mix, rajam sukku coffee
+    '09109929',  # mixed spices — chukku malli kappi
+    '09109100',  # curry/spice mixes — vijay ginger coffee chukku kappi
+    '09024030',  # tea — nadan chukkukappi, ginger coffee
+    '21012090',  # tea extracts — amazon coffee premix, instant coffee premix
+    '21069099',  # misc food — rajam sukku coffee, bimah karupatti coffee premix
 ]
 
 ALL_CODES = COFFEE_CODES + CHICORY_CODES + CANDIDATE_CODES
 
-# HS codes where we apply strict description-based coffee verification
-STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
+STRICT_COFFEE_CHECK_CODES = ['21011190', '21011200']
 
 COFFEE_SIGNALS = [
     'COFFEE', 'KAPPI', 'CAPPI', 'COFFE', 'COFEE',
     'CAPPUCCINO', 'CAPUCCINO', 'CAPUCHINO',
     'CPC', 'LATTE', 'ESPRESSO', 'AMERICANO', 'MOCHA',
     'MACCHIATO', 'FRAPPE', 'COLD BREW', 'COLD COFFEE',
-    'NESCAFE', 'NESCAFÉ', 'BRU', 'LEVISTA', 'DAVIDOFF',
+    'NESCAFE', 'NESCAFE', 'BRU', 'LEVISTA', 'DAVIDOFF',
     'COTHAS', 'CONTINENTAL', 'CHAIZUP',
-    'TATA COFFEE', 'CAFÉ', 'CAFE',
+    'TATA COFFEE', 'CAFE', 'CAFE',
     'SPRAY DRIED', 'FREEZE DRIED', 'AGGLOMERATED',
     'DECOCTION', 'PERCOLATE', 'ROAST AND GROUND', 'CHICORY',
     'KAAPI', 'KAPI',
@@ -165,7 +175,6 @@ TEA_SIGNALS = [
     'MASALA TEA', 'CHAI', 'LEMON TEA', 'ICED TEA',
 ]
 
-# FIX 2: Signals that confirm a product belongs under chicory/chukku
 CHICORY_SIGNALS = [
     'CHUKKU', 'CHICORY', 'CHICOREE', 'SUKKU', 'CHIKKU',
     'KAPPI', 'KAAPI', 'GINGER COFFEE', 'NELLARA', 'WAYANADAN',
@@ -173,7 +182,6 @@ CHICORY_SIGNALS = [
     'ADU KAPPI', 'NADAN KAPPI',
 ]
 
-# Signals that confirm a product is a raw/green bean — exclude from soluble pool
 RAW_BEAN_SIGNALS = [
     'NOT ROASTED', 'GREEN BEAN', 'GREEN COFFEE BEAN', 'PARCHMENT',
     'CHERRY AB', 'CHERRY A ', 'CHERRY-A', 'CHERRY-AB',
@@ -183,33 +191,50 @@ RAW_BEAN_SIGNALS = [
     'WASHED ARABICA', 'WASHED COFFEE ARABICA',
 ]
 
-# Words that signal start of a secondary/bundled product — truncate here
 STOP_WORDS = ['WITH MAGGI', 'FRW', 'EACH', 'PR FRAPPE']
 
 # ================================================================
-# FUNCTIONS
+# HELPER: normalise any HS code value to zero-padded 8-char string
 # ================================================================
-
-# FIX 2: Chicory-aware exclusion logic
-def should_exclude(desc, hsn, excl_df):
-    desc = str(desc).upper()
+def normalise_hs(val):
+    """
+    Converts any HS code representation to a zero-padded 8-character string.
+      int    9019090   -> '09019090'
+      float  21011130.0 -> '21011130'
+      str    '21011120' -> '21011120'
+      str    '9019090'  -> '09019090'
+    """
     try:
-        hsn = int(hsn) if pd.notna(hsn) else 0
-    except (ValueError, TypeError):
-        hsn = 0
+        s = str(val).strip()
+        if '.' in s:
+            s = s.split('.')[0]
+        s = re.sub(r'\D', '', s)   # strip any non-digit characters
+        return s.zfill(8)
+    except Exception:
+        return ''
 
-    # ── CHICORY CODES: bypass exclusion if any chicory signal present ──
-    # Previously, products like "NELLARA CHUKKU KAPPI" under 21013090
-    # had no "CHICORY" keyword so fell through to the exclusion keyword
-    # list and were incorrectly dropped.
-    if hsn in CHICORY_CODES:
+
+# ================================================================
+# EXCLUSION LOGIC
+# ================================================================
+def should_exclude(desc, hs_norm, excl_df):
+    """
+    Returns (exclude: bool, reason: str).
+    hs_norm is a zero-padded 8-char string (e.g. '21011190').
+    """
+    desc = str(desc).upper()
+
+    # ── CHICORY CODES: never exclude if any chicory signal present ──
+    # Previously products like "NELLARA CHUKKU KAPPI" under 21013090
+    # had no "CHICORY" keyword so fell through to the exclusion list
+    # and were incorrectly dropped.
+    if hs_norm in CHICORY_CODES:
         if any(s in desc for s in CHICORY_SIGNALS):
-            return False, ''   # valid chicory product — keep
-        # HS code is chicory but no recognisable signal — keep but flag
+            return False, ''
         return False, 'CHICORY CODE — VERIFY DESCRIPTION'
 
-    # ── STRICT COFFEE SIGNAL CHECK (21011190, 21011200) ──
-    if hsn in STRICT_COFFEE_CHECK_CODES:
+    # ── STRICT COFFEE SIGNAL CHECK ──
+    if hs_norm in STRICT_COFFEE_CHECK_CODES:
         strong = any(s in desc for s in COFFEE_SIGNALS)
         weak   = any(s in desc for s in WEAK_COFFEE_SIGNALS)
         tea    = any(s in desc for s in TEA_SIGNALS)
@@ -230,6 +255,47 @@ def should_exclude(desc, hsn, excl_df):
     return False, ''
 
 
+# ================================================================
+# CANDIDATE POOL CLASSIFIER
+# ================================================================
+def classify_candidate(desc):
+    """
+    Classifies a product from CANDIDATE_CODES into COFFEE / CHICORY / EXCLUDE
+    based purely on its description.
+    """
+    desc = str(desc).upper()
+
+    # Hard exclude: raw green beans that tripped coffee keywords
+    if any(r in desc for r in RAW_BEAN_SIGNALS):
+        return 'EXCLUDE'
+
+    # Non-coffee items that sometimes appear alongside coffee
+    non_coffee = [
+        'COFFEE SYRUP', 'COFFEE CREAMER', 'COFFEE RUSH', 'PROTEIN BAR',
+        'NON DAIRY CREAMER', 'COFFEE HUSK', 'COFFEE FRAPPE POWDER',
+        'NALANGU MAYU', 'ICED TEA', 'LEMON TEA', 'PEACH ICED TEA',
+    ]
+    if any(nc in desc for nc in non_coffee):
+        return 'EXCLUDE'
+
+    # Tea premixes that mention coffee only incidentally
+    if 'TEA PREMIX' in desc and 'COFFEE FLAVOUR' in desc:
+        return 'EXCLUDE'
+
+    # Chicory / chukku signals
+    if any(s in desc for s in CHICORY_SIGNALS):
+        return 'CHICORY'
+
+    # Strong coffee signals
+    if any(s in desc for s in COFFEE_SIGNALS):
+        return 'COFFEE'
+
+    return 'EXCLUDE'
+
+
+# ================================================================
+# MT CONVERSION
+# ================================================================
 def convert_to_mt(row):
     qty  = row.get('STANDARD QUANTITY')
     unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
@@ -259,44 +325,36 @@ def convert_to_mt(row):
                     clean = clean.split(sw)[0]
             clean = clean.replace(' X ', 'X').replace('*', 'X')
 
-            # 10(48X16G)
             m = re.search(r'(\d+)\((\d+)X(\d+(?:\.\d+)?)G\)', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
 
-            # 16X1KG
             m = re.search(r'(\d+)X(\d+(?:\.\d+)?)KG', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
 
-            # 1KGX16
             m = re.search(r'(\d+(?:\.\d+)?)KGX(\d+)', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
 
-            # 6X180G
             m = re.search(r'(\d+)X(\d+(?:\.\d+)?)G', clean)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            # 36X24 (assume grams if reasonable)
             m = re.search(r'(\d+)X(\d+)(?![A-Z])', clean)
             if m:
                 val2 = float(m.group(2))
                 if val2 < 2000:
                     return qty * float(m.group(1)) * val2 / 1_000_000, 'PARSED'
 
-            # 0.96 KGS NET
             m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean)
             if m:
                 return qty * float(m.group(1)) / 1000, 'PARSED'
 
-            # 40GRM
             m = re.search(r'(\d+(?:\.\d+)?)\s*GRM', clean)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            # Fallback — last number with G / KG / ML
             grams = re.findall(r'(\d+(?:\.\d+)?)\s*G', clean)
             if grams:
                 return qty * float(grams[-1]) / 1_000_000, 'PARSED'
@@ -315,44 +373,9 @@ def convert_to_mt(row):
     return None, 'BLANK'
 
 
-# FIX 1: Description-level classifier for candidate pool entries
-def classify_candidate(desc):
-    """
-    Classifies a product from the CANDIDATE_CODES pool into:
-      'COFFEE'  — soluble/instant coffee misclassified under a wrong HS code
-      'CHICORY' — chukku/chicory product misclassified under a wrong HS code
-      'EXCLUDE' — raw bean, non-coffee, or genuinely belongs elsewhere
-    """
-    desc = str(desc).upper()
-
-    # Hard exclude: raw green beans that tripped coffee keywords
-    if any(r in desc for r in RAW_BEAN_SIGNALS):
-        return 'EXCLUDE'
-
-    # Non-coffee items that sometimes appear alongside coffee
-    non_coffee = [
-        'COFFEE SYRUP', 'COFFEE CREAMER', 'COFFEE RUSH', 'PROTEIN BAR',
-        'NON DAIRY CREAMER', 'COFFEE HUSK', 'COFFEE FRAPPE POWDER',
-        'NALANGU MAYU', 'ICED TEA', 'LEMON TEA', 'PEACH ICED TEA',
-    ]
-    if any(nc in desc for nc in non_coffee):
-        return 'EXCLUDE'
-
-    # Tea premixes that mention coffee only incidentally
-    if 'TEA PREMIX' in desc and 'COFFEE FLAVOUR' in desc:
-        return 'EXCLUDE'   # e.g. KARAK TEA PREMIX WITH COFFEE FLAVOUR
-
-    # Chicory / chukku signals (these go to Chicory sheet)
-    if any(s in desc for s in CHICORY_SIGNALS):
-        return 'CHICORY'
-
-    # Strong coffee signals → Coffee sheet
-    if any(s in desc for s in COFFEE_SIGNALS):
-        return 'COFFEE'
-
-    return 'EXCLUDE'
-
-
+# ================================================================
+# FILE LOADERS
+# ================================================================
 @st.cache_data
 def load_exclusion_list(file):
     return pd.read_excel(file)
@@ -363,30 +386,45 @@ def load_raw_file(file):
     return pd.read_excel(file)
 
 
+# ================================================================
+# CORE PROCESSING
+# ================================================================
 def process_file(file, excl_df):
     df = load_raw_file(file)
 
+    # Find HS code column
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
     if hs_col is None:
         st.error("Could not find an HS/HSN column in the uploaded file.")
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-    # Convert HS column to int safely for matching
-    df[hs_col] = pd.to_numeric(df[hs_col], errors='coerce')
+    # ── CRITICAL: normalise HS column to zero-padded 8-char strings ──
+    # This is why 21011130 and leading-zero codes were silently dropped:
+    # pd.to_numeric turns '09019090' into 9019090 (int) or 9019090.0 (float),
+    # and isin([int_list]) then silently mismatches. String normalisation fixes all cases.
+    df['_hs_norm'] = df[hs_col].apply(normalise_hs)
 
-    # Pull in primary codes + candidate pool
-    df = df[df[hs_col].isin(ALL_CODES)].copy()
+    # Show diagnostic info so you can verify matching immediately
+    all_unique   = sorted(df['_hs_norm'].unique().tolist())
+    codes_matched = [c for c in all_unique if c in ALL_CODES]
+    st.info(
+        f"**{file.name}** — {len(df):,} total rows | "
+        f"HS codes matched into pipeline: `{'`, `'.join(codes_matched) if codes_matched else 'NONE — check column name'}`"
+    )
 
-    # Split into primary-code rows and candidate-pool rows
-    primary_mask   = df[hs_col].isin(COFFEE_CODES + CHICORY_CODES)
-    candidate_mask = df[hs_col].isin(CANDIDATE_CODES)
+    # Filter to relevant codes using normalised column
+    df = df[df['_hs_norm'].isin(ALL_CODES)].copy()
+
+    # Split: primary (definitively correct codes) vs candidate (misclassification pool)
+    primary_mask   = df['_hs_norm'].isin(COFFEE_CODES + CHICORY_CODES)
+    candidate_mask = df['_hs_norm'].isin(CANDIDATE_CODES)
 
     primary_df   = df[primary_mask].copy()
     candidate_df = df[candidate_mask].copy()
 
-    # ── Apply exclusion logic to PRIMARY rows ──
+    # ── Exclusion logic on primary rows (pass normalised HS string) ──
     results = primary_df.apply(
-        lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r[hs_col], excl_df), axis=1
+        lambda r: should_exclude(r['PRODUCT DESCRIPTION'], r['_hs_norm'], excl_df), axis=1
     )
     primary_df['_excl']   = [x[0] for x in results]
     primary_df['_reason'] = [x[1] for x in results]
@@ -395,28 +433,32 @@ def process_file(file, excl_df):
     removed_primary['REASON'] = removed_primary['_reason']
     keep_primary = primary_df[~primary_df['_excl']].copy()
 
+    # Clean internal columns
     for col in ['_excl', '_reason']:
         removed_primary.drop(columns=[col], inplace=True, errors='ignore')
-        keep_primary.drop(columns=[col], inplace=True, errors='ignore')
 
-    # Separate kept primary into coffee / chicory
-    coffee  = keep_primary[keep_primary[hs_col].isin(COFFEE_CODES)].copy()
-    chicory = keep_primary[keep_primary[hs_col].isin(CHICORY_CODES)].copy()
+    # Split kept primary into Coffee / Chicory using normalised column (still present)
+    coffee  = keep_primary[keep_primary['_hs_norm'].isin(COFFEE_CODES)].copy()
+    chicory = keep_primary[keep_primary['_hs_norm'].isin(CHICORY_CODES)].copy()
     removed = removed_primary.copy()
 
-    # ── FIX 1: Classify candidate pool by description ──
+    # Drop _hs_norm from outputs
+    for d in [coffee, chicory, removed]:
+        d.drop(columns=['_hs_norm'], inplace=True, errors='ignore')
+
+    # ── Classify candidate pool by description ──
     if not candidate_df.empty:
-        candidate_df['_class'] = candidate_df['PRODUCT DESCRIPTION'].apply(
-            classify_candidate
-        )
+        candidate_df = candidate_df.copy()
+        candidate_df['_class'] = candidate_df['PRODUCT DESCRIPTION'].apply(classify_candidate)
+
         extra_coffee   = candidate_df[candidate_df['_class'] == 'COFFEE'].copy()
         extra_chicory  = candidate_df[candidate_df['_class'] == 'CHICORY'].copy()
         extra_excluded = candidate_df[candidate_df['_class'] == 'EXCLUDE'].copy()
 
-        extra_excluded['REASON'] = 'Candidate pool — description not coffee/chicory'
+        extra_excluded['REASON'] = 'Candidate pool — no coffee/chicory signal in description'
 
         for d in [extra_coffee, extra_chicory, extra_excluded]:
-            d.drop(columns=['_class'], inplace=True, errors='ignore')
+            d.drop(columns=['_class', '_hs_norm'], inplace=True, errors='ignore')
 
         coffee  = pd.concat([coffee,  extra_coffee],   ignore_index=True)
         chicory = pd.concat([chicory, extra_chicory],  ignore_index=True)
@@ -432,6 +474,9 @@ def process_file(file, excl_df):
     return coffee, chicory, removed
 
 
+# ================================================================
+# EXCEL STYLING
+# ================================================================
 def apply_header_colours(buf):
     buf.seek(0)
     wb = load_workbook(buf)
@@ -495,9 +540,9 @@ if st.button("Run"):
 
                 st.success(
                     f"✅ {f.name} — "
-                    f"{len(c)} coffee rows | "
-                    f"{len(ch)} chicory rows | "
-                    f"{len(e)} excluded"
+                    f"{len(c):,} coffee rows | "
+                    f"{len(ch):,} chicory rows | "
+                    f"{len(e):,} excluded"
                 )
                 st.download_button(
                     label=f"⬇ Download MT_CLEANED_{f.name}",
