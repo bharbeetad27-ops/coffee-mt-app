@@ -27,12 +27,6 @@ st.markdown("""
 }
 .hero h1 { font-size: 42px; font-weight: 600; }
 .hero p { color: #94a3b8; }
-.section {
- background: #f8fafc;
- padding: 40px;
- border-radius: 16px;
- margin-bottom: 40px;
-}
 .pipeline { padding: 20px; }
 .block {
  background: #0f172a;
@@ -75,7 +69,19 @@ HARD_EXCLUDE = [
 ]
 
 # ================================================================
-# VALIDATION FUNCTION
+# EXCLUSION LIST LOGIC (PRIORITY 1)
+# ================================================================
+def matches_exclusion(desc, excl_df):
+    desc = str(desc).upper()
+
+    for _, r in excl_df.iterrows():
+        keyword = str(r['KEYWORD']).upper().strip()
+        if keyword and keyword in desc:
+            return True
+    return False
+
+# ================================================================
+# SOLUBLE COFFEE CHECK
 # ================================================================
 def is_valid_soluble(desc):
     desc = str(desc).upper()
@@ -84,9 +90,6 @@ def is_valid_soluble(desc):
         return False
 
     if not any(x in desc for x in STRONG_SIGNALS):
-        return False
-
-    if any(x in desc for x in HARD_EXCLUDE):
         return False
 
     return True
@@ -114,52 +117,43 @@ def convert_to_mt(row):
     if unit in ('ML', 'LTR'):
         return qty / 1_000_000, 'DIRECT'
 
-    if unit in ('NOS', 'PCS', 'CTN'):
-        try:
-            clean = desc.replace(" X ", "X").replace("*", "X")
-
-            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)G', clean)
-            if m:
-                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
-
-            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)KG', clean)
-            if m:
-                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
-
-        except:
-            return None, 'BLANK'
-
     return None, 'BLANK'
 
 # ================================================================
 # PROCESS FUNCTION
 # ================================================================
-def process_file(file):
+def process_file(file, excl_df):
     df = pd.read_excel(file)
 
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
     df[hs_col] = pd.to_numeric(df[hs_col], errors='coerce')
 
-    # Clean description
     df["DESC"] = df["PRODUCT DESCRIPTION"].astype(str).str.upper()
 
-    # Flags
+    # 1. EXCLUSION LIST (highest priority)
+    df["EXCL_MATCH"] = df["DESC"].apply(lambda x: matches_exclusion(x, excl_df))
+
+    # 2. HARD EXCLUSIONS
+    df["HARD_EXCL"] = df["DESC"].apply(
+        lambda x: any(k in x for k in HARD_EXCLUDE)
+    )
+
+    # 3. HS COFFEE
     df["IS_HS_COFFEE"] = df[hs_col].isin(COFFEE_CODES)
+
+    # 4. SOLUBLE DETECTION
     df["IS_SOLUBLE"] = df["DESC"].apply(is_valid_soluble)
 
-    # Combine logic
-    df["FINAL_INCLUDE"] = df["IS_HS_COFFEE"] | df["IS_SOLUBLE"]
-
-    # Remove junk even inside correct HS
-    df.loc[df["IS_HS_COFFEE"], "FINAL_INCLUDE"] = df.apply(
-        lambda r: False if any(x in r["DESC"] for x in HARD_EXCLUDE) else True,
+    # FINAL DECISION
+    df["FINAL_INCLUDE"] = df.apply(
+        lambda r: False if r["EXCL_MATCH"] or r["HARD_EXCL"]
+        else (r["IS_HS_COFFEE"] or r["IS_SOLUBLE"]),
         axis=1
     )
 
     coffee = df[df["FINAL_INCLUDE"]].copy()
     removed = df[~df["FINAL_INCLUDE"]].copy()
 
-    # Misclassified coffee
     wrong_hs = coffee[~coffee[hs_col].isin(COFFEE_CODES)].copy()
 
     # MT conversion
@@ -171,15 +165,18 @@ def process_file(file):
     return coffee, removed, wrong_hs
 
 # ================================================================
-# UI PIPELINE (UNCHANGED)
+# UI (UNCHANGED)
 # ================================================================
 st.markdown('<div class="pipeline">', unsafe_allow_html=True)
 
+excl = st.file_uploader("Exclusion List", type=["xlsx"])
 raws = st.file_uploader("Raw Files", type=["xlsx"], accept_multiple_files=True)
 
 if st.button("Run"):
+    excl_df = pd.read_excel(excl)
+
     for f in raws:
-        c, e, w = process_file(f)
+        c, e, w = process_file(f, excl_df)
 
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine='openpyxl') as writer:
