@@ -69,32 +69,6 @@ HARD_EXCLUDE = [
 ]
 
 # ================================================================
-# EXCLUSION LIST LOGIC (PRIORITY 1)
-# ================================================================
-def matches_exclusion(desc, excl_df):
-    desc = str(desc).upper()
-
-    for _, r in excl_df.iterrows():
-        keyword = str(r['KEYWORD']).upper().strip()
-        if keyword and keyword in desc:
-            return True
-    return False
-
-# ================================================================
-# SOLUBLE COFFEE CHECK
-# ================================================================
-def is_valid_soluble(desc):
-    desc = str(desc).upper()
-
-    if "COFFEE" not in desc:
-        return False
-
-    if not any(x in desc for x in STRONG_SIGNALS):
-        return False
-
-    return True
-
-# ================================================================
 # MT CONVERSION (UNCHANGED)
 # ================================================================
 def convert_to_mt(row):
@@ -120,7 +94,7 @@ def convert_to_mt(row):
     return None, 'BLANK'
 
 # ================================================================
-# PROCESS FUNCTION
+# PROCESS FUNCTION (OPTIMIZED)
 # ================================================================
 def process_file(file, excl_df):
     df = pd.read_excel(file)
@@ -128,27 +102,36 @@ def process_file(file, excl_df):
     hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
     df[hs_col] = pd.to_numeric(df[hs_col], errors='coerce')
 
+    # Clean description
     df["DESC"] = df["PRODUCT DESCRIPTION"].astype(str).str.upper()
 
-    # 1. EXCLUSION LIST (highest priority)
-    df["EXCL_MATCH"] = df["DESC"].apply(lambda x: matches_exclusion(x, excl_df))
+    # ---------------- EXCLUSION LIST (VECTORIZED) ----------------
+    keywords = excl_df["KEYWORD"].astype(str).str.upper().str.strip().tolist()
+    if keywords:
+        excl_pattern = "|".join(map(re.escape, keywords))
+        df["EXCL_MATCH"] = df["DESC"].str.contains(excl_pattern, regex=True, na=False)
+    else:
+        df["EXCL_MATCH"] = False
 
-    # 2. HARD EXCLUSIONS
-    df["HARD_EXCL"] = df["DESC"].apply(
-        lambda x: any(k in x for k in HARD_EXCLUDE)
-    )
+    # ---------------- HARD EXCLUSION ----------------
+    hard_pattern = "|".join(HARD_EXCLUDE)
+    df["HARD_EXCL"] = df["DESC"].str.contains(hard_pattern, regex=True, na=False)
 
-    # 3. HS COFFEE
+    # ---------------- HS COFFEE ----------------
     df["IS_HS_COFFEE"] = df[hs_col].isin(COFFEE_CODES)
 
-    # 4. SOLUBLE DETECTION
-    df["IS_SOLUBLE"] = df["DESC"].apply(is_valid_soluble)
+    # ---------------- SOLUBLE DETECTION ----------------
+    strong_pattern = "|".join(STRONG_SIGNALS)
+    df["IS_SOLUBLE"] = (
+        df["DESC"].str.contains("COFFEE", na=False) &
+        df["DESC"].str.contains(strong_pattern, regex=True, na=False)
+    )
 
-    # FINAL DECISION
-    df["FINAL_INCLUDE"] = df.apply(
-        lambda r: False if r["EXCL_MATCH"] or r["HARD_EXCL"]
-        else (r["IS_HS_COFFEE"] or r["IS_SOLUBLE"]),
-        axis=1
+    # ---------------- FINAL LOGIC ----------------
+    df["FINAL_INCLUDE"] = (
+        (~df["EXCL_MATCH"]) &
+        (~df["HARD_EXCL"]) &
+        (df["IS_HS_COFFEE"] | df["IS_SOLUBLE"])
     )
 
     coffee = df[df["FINAL_INCLUDE"]].copy()
