@@ -2,116 +2,205 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.utils import get_column_letter
 
-# ================= CONFIG =================
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="Coffee Trade Intelligence", layout="wide")
+
+# ---------------- GLOBAL CSS ----------------
+st.markdown("""
+<style>
+.stApp {
+ background: linear-gradient(180deg, #020617 0%, #020617 100%);
+ color: white;
+ font-family: 'Inter', sans-serif;
+}
+.hero {
+ background-image: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.95)),
+ url("https://images.unsplash.com/photo-1498804103079-a6351b050096");
+ background-size: cover;
+ background-position: center;
+ padding: 80px 40px;
+ border-radius: 16px;
+ margin-bottom: 40px;
+}
+.hero h1 { font-size: 42px; font-weight: 600; }
+.hero p { color: #94a3b8; }
+.pipeline { padding: 20px; }
+.block {
+ background: #0f172a;
+ padding: 25px;
+ border-radius: 12px;
+ margin-bottom: 20px;
+}
+.stButton button {
+ background: #1d4ed8;
+ color: white;
+ border-radius: 8px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+# ---------------- HERO ----------------
+st.markdown("""
+<div class="hero">
+ <h1>Coffee Trade Intelligence</h1>
+ <p>Upload → Clean → Convert → Download</p>
+</div>
+""", unsafe_allow_html=True)
+
+# ================================================================
+# CONSTANTS
+# ================================================================
 COFFEE_CODES = [21011110, 21011120, 21011130, 21011190, 21011200]
-CHICORY_CODES = [21012010, 21012020, 21012030, 21012090]
-VALID_CODES = COFFEE_CODES + CHICORY_CODES
+CHICORY_CODES = [210130, 21013010]
+ALL_CODES = COFFEE_CODES + CHICORY_CODES
+STRICT_COFFEE_CHECK_CODES = [21011190, 21011200]
 
-REMOVE_KEYWORDS = [
-    'INSTANT TEA','TEA POWDER','TEA EXTRACT','TEA PREMIX',
-    'BLACK TEA','GREEN TEA','CHAI','HERBAL TEA','TURMERIC LATTE'
-]
+COFFEE_SIGNALS = ['COFFEE','KAPPI','CAPPI','NESCAFE','BRU','LEVISTA','DAVIDOFF']
+WEAK_COFFEE_SIGNALS = ['PREMIX','MIX','3 IN 1','2 IN 1']
+TEA_SIGNALS = ['TEA','CHAI']
 
-KEEP_KEYWORDS = [
-    'SOLUBLE COFFEE','INSTANT COFFEE','SPRAY DRIED COFFEE',
-    'FREEZE DRIED COFFEE','COFFEE PREMIX','COFFEE EXTRACT',
-    'BRU','NESCAFE','DAVIDOFF','LEVISTA','COTHAS'
-]
-
-STRONG_COFFEE = [
-    "INSTANT","SOLUBLE","AGGLOMERATED",
-    "SPRAY DRIED","FREEZE DRIED","EXTRACT"
-]
-
-# ================= HELPERS =================
-def should_remove(desc):
+# ================================================================
+# FIXED EXCLUSION FUNCTION
+# ================================================================
+def should_exclude(desc, hsn, excl_df):
     desc = str(desc).upper()
-    if any(k in desc for k in KEEP_KEYWORDS):
-        return False
-    return any(k in desc for k in REMOVE_KEYWORDS)
 
-def is_coffee(desc):
-    desc = str(desc).upper()
-    return "COFFEE" in desc and any(s in desc for s in STRONG_COFFEE)
+    # 1. Exclusion list FIRST
+    for _, r in excl_df.iterrows():
+        keyword = str(r['KEYWORD']).upper().strip()
+        if keyword and keyword in desc:
+            return True, r['REASON']
 
-def get_chicory_fraction(desc):
-    desc = str(desc).upper()
-    match = re.search(r'(\d+):(\d+)', desc)
-    if match:
-        c, ch = int(match.group(1)), int(match.group(2))
-        if c + ch == 100:
-            return ch / 100
-    return 0
+    # 2. Strict coffee logic
+    hsn = int(hsn) if pd.notna(hsn) else 0
 
-def convert_to_mt(qty, unit):
-    if pd.isna(qty): return None
-    unit = str(unit).upper()
-    if unit == 'KGS': return qty / 1000
-    if unit == 'MTS': return qty
-    return None
+    if hsn in STRICT_COFFEE_CHECK_CODES:
+        strong = any(s in desc for s in COFFEE_SIGNALS)
+        weak = any(s in desc for s in WEAK_COFFEE_SIGNALS)
+        tea = any(s in desc for s in TEA_SIGNALS)
 
-# ================= CORE =================
-def process(df):
-    hs_col = next(c for c in df.columns if 'HS' in c.upper())
-    desc_col = next(c for c in df.columns if 'DESC' in c.upper())
+        if strong:
+            return False, ''
+        elif tea:
+            return True, "Tea detected"
+        elif weak:
+            return False, "Premix assumed coffee"
+        else:
+            return True, "No coffee signal"
 
-    df[hs_col] = pd.to_numeric(df[hs_col], errors='coerce')
-    df["DESC"] = df[desc_col].astype(str).str.upper()
+    return False, ''
 
-    # 1. CLEAN DATA
-    df_valid = df[df[hs_col].isin(VALID_CODES)].copy()
-    df_valid = df_valid[~df_valid["DESC"].apply(should_remove)]
+# ================================================================
+# MT FUNCTION (UNCHANGED)
+# ================================================================
+def convert_to_mt(row):
+    qty = row.get('STANDARD QUANTITY')
+    unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
 
-    # 2. HS → PRODUCT ERRORS
-    hs_errors = df_valid[
-        df_valid["DESC"].apply(lambda x: any(k in x for k in REMOVE_KEYWORDS))
+    if pd.isna(qty):
+        return None, 'BLANK'
+
+    try:
+        qty = float(qty)
+    except:
+        return None, 'BLANK'
+
+    if unit in ('KGS','KG'):
+        return qty / 1000, 'DIRECT'
+    if unit in ('MTS','MT'):
+        return qty, 'DIRECT'
+
+    return None, 'BLANK'
+
+# ================================================================
+# PROCESS FUNCTION (FIXED)
+# ================================================================
+def process_file(file, excl_df):
+    df = pd.read_excel(file)
+
+    hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
+
+    # -------- CLEAN DESC --------
+    df["DESC"] = df["PRODUCT DESCRIPTION"].astype(str).str.upper()
+
+    # -------- BASE DATA --------
+    base_df = df[df[hs_col].isin(ALL_CODES)].copy()
+
+    # -------- MISCLASSIFIED COFFEE --------
+    strong_pattern = r"INSTANT|SOLUBLE|AGGLOMERATED|SPRAY DRIED|FREEZE DRIED|EXTRACT"
+
+    df["IS_SOLUBLE"] = (
+        df["DESC"].str.contains("COFFEE", na=False) &
+        df["DESC"].str.contains(strong_pattern, regex=True, na=False)
+    )
+
+    misclassified = df[
+        (~df[hs_col].isin(ALL_CODES)) &
+        (df["IS_SOLUBLE"])
+    ].copy()
+
+    # -------- COMBINE --------
+    df = pd.concat([base_df, misclassified], ignore_index=True)
+
+    # -------- EXCLUSION (FASTER) --------
+    results = [
+        should_exclude(desc, hsn, excl_df)
+        for desc, hsn in zip(df["DESC"], df[hs_col])
     ]
 
-    # 3. PRODUCT → HS ERRORS
-    prod_errors = df[
-        (~df[hs_col].isin(VALID_CODES)) &
-        (df["DESC"].apply(is_coffee))
-    ]
+    df['_excl'] = [x[0] for x in results]
+    df['_reason'] = [x[1] for x in results]
 
-    # 4. METRICS
-    if 'STANDARD QUANTITY' in df_valid.columns:
-        df_valid["TOTAL_SOLUBLE_MT"] = df_valid.apply(
-            lambda r: convert_to_mt(r['STANDARD QUANTITY'], r.get('STANDARD QUANTITY UNIT','')), axis=1
-        )
+    removed = df[df['_excl']].copy()
+    removed['REASON'] = removed['_reason']
 
-        df_valid["CHICORY_FRACTION"] = df_valid["DESC"].apply(get_chicory_fraction)
+    keep = df[~df['_excl']].copy()
 
-        df_valid["PURE_COFFEE_MT"] = df_valid.apply(
-            lambda r: r["TOTAL_SOLUBLE_MT"] * (1 - r["CHICORY_FRACTION"])
-            if pd.notna(r["TOTAL_SOLUBLE_MT"]) else None,
-            axis=1
-        )
+    coffee = keep[keep[hs_col].isin(COFFEE_CODES)].copy()
+    chicory = keep[keep[hs_col].isin(CHICORY_CODES)].copy()
 
-        df_valid["IMPLIED_CHICORY_MT"] = (
-            df_valid["TOTAL_SOLUBLE_MT"] - df_valid["PURE_COFFEE_MT"]
-        )
+    for d in [coffee, chicory]:
+        if len(d):
+            mt_results = d.apply(convert_to_mt, axis=1)
+            d['MT'] = [x[0] for x in mt_results]
+            d['STATUS'] = [x[1] for x in mt_results]
 
-    return df_valid, hs_errors, prod_errors
+    return coffee, chicory, removed
 
-# ================= UI =================
-st.title("Coffee Trade Intelligence")
+# ================================================================
+# UI (UNCHANGED)
+# ================================================================
+st.markdown('<div class="pipeline">', unsafe_allow_html=True)
 
-files = st.file_uploader("Upload files", type=["xlsx"], accept_multiple_files=True)
+st.subheader("Stage 1 — Upload Exclusion List")
+excl = st.file_uploader("Exclusion List", type=["xlsx"])
+
+st.subheader("Stage 2 — Upload Raw Data")
+raws = st.file_uploader("Raw CYBEX Files", type=["xlsx"], accept_multiple_files=True)
 
 if st.button("Run"):
-    for f in files:
-        df = pd.read_excel(f)
-        clean, hs_err, prod_err = process(df)
+    if not excl:
+        st.error("Upload exclusion list")
+    elif not raws:
+        st.error("Upload files")
+    else:
+        excl_df = pd.read_excel(excl)
 
-        buffer = io.BytesIO()
-        with pd.ExcelWriter(buffer) as writer:
-            clean.to_excel(writer, "Clean Data", index=False)
-            hs_err.to_excel(writer, "HS Errors", index=False)
-            prod_err.to_excel(writer, "Product Errors", index=False)
+        for f in raws:
+            c, ch, e = process_file(f, excl_df)
 
-        st.download_button(
-            f"Download {f.name}",
-            buffer.getvalue(),
-            file_name=f"CLEANED_{f.name}"
-        )
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='openpyxl') as w:
+                c.to_excel(w, sheet_name="Coffee", index=False)
+                ch.to_excel(w, sheet_name="Chicory", index=False)
+                e.to_excel(w, sheet_name="Excluded", index=False)
+
+            st.download_button(
+                label=f"Download {f.name}",
+                data=buf.getvalue(),
+                file_name=f"CLEANED_{f.name}"
+            )
