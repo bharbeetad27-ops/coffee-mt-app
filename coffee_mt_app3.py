@@ -3,9 +3,6 @@ import pandas as pd
 import numpy as np
 import io
 import re
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
 
 # ---------------- PAGE CONFIG ----------------
 st.set_page_config(page_title="Coffee Trade Intelligence", layout="wide")
@@ -578,57 +575,78 @@ def convert_to_mt_vectorised(df):
     )
 
 # ================================================================
-# EXCEL FORMATTING (same colour palette as original)
+# EXCEL FORMATTING — xlsxwriter (memory-efficient, no cell-by-cell loop)
 # ================================================================
+EXCEL_SHEETS = [
+    '1 All Soluble Coffee',
+    '2 Chicory Explicit Ratio',
+    '3 Chicory Known Brand',
+    '4 Chicory Assumed',
+    '5 Chicory Only Exports',
+    'Summary',
+]
+
 SHEET_COLOURS = {
-    '1 All Soluble Coffee':      ('1F4E79', 'D6E4F0', 'EBF4FA', 'FFFFFF'),
-    '2 Chicory Explicit Ratio':  ('1A5E20', 'D4EDDA', 'EAF7EC', 'FFFFFF'),
-    '3 Chicory Known Brand':     ('7B4F00', 'FFF3CD', 'FFFAED', 'FFFFFF'),
-    '4 Chicory Assumed':         ('6A0572', 'F3D6F5', 'FAF0FB', 'FFFFFF'),
-    '5 Chicory Only Exports':    ('2C3E50', 'D5DBDB', 'F2F3F4', 'FFFFFF'),
-    '6 Excluded Items Review':   ('4A4A4A', 'E8E8E8', 'F5F5F5', 'FFFFFF'),
-    'Summary':                   ('0D3B66', 'D6E4F0', 'EBF4FA', 'FFFFFF'),
+    '1 All Soluble Coffee':      ('1F4E79', 'D6E4F0', 'EBF4FA'),
+    '2 Chicory Explicit Ratio':  ('1A5E20', 'D4EDDA', 'EAF7EC'),
+    '3 Chicory Known Brand':     ('7B4F00', 'FFF3CD', 'FFFAED'),
+    '4 Chicory Assumed':         ('6A0572', 'F3D6F5', 'FAF0FB'),
+    '5 Chicory Only Exports':    ('2C3E50', 'D5DBDB', 'F2F3F4'),
+    'Summary':                   ('0D3B66', 'D6E4F0', 'EBF4FA'),
 }
 
-def hex_fill(hex_code):
-    return PatternFill(start_color=hex_code, end_color=hex_code, fill_type='solid')
+def _hex(h):
+    return f'#{h}'
 
-def thin_border():
-    side = Side(style='thin', color='CCCCCC')
-    return Border(left=side, right=side, top=side, bottom=side)
+def write_excel(sheets_dict):
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        for sheet_name in EXCEL_SHEETS:
+            if sheet_name not in sheets_dict:
+                continue
+            df_out = sheets_dict[sheet_name]
+            df_out.to_excel(writer, sheet_name=sheet_name, index=False)
 
-def format_sheet(ws, header_hex, row1_hex, row2_hex, font_hex):
-    header_fill = hex_fill(header_hex)
-    header_font = Font(bold=True, color=font_hex, size=10)
-    for cell in ws[1]:
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal='center', vertical='center', wrap_text=True)
-        cell.border = thin_border()
+            wb  = writer.book
+            ws  = writer.sheets[sheet_name]
+            colours = SHEET_COLOURS.get(sheet_name, ('1F4E79', 'D6E4F0', 'EBF4FA'))
+            hdr_hex, row1_hex, row2_hex = colours
 
-    fill1 = hex_fill(row1_hex)
-    fill2 = hex_fill(row2_hex)
-    data_font = Font(size=9, color='1A1A1A')
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2), start=1):
-        fill = fill1 if row_idx % 2 == 1 else fill2
-        for cell in row:
-            cell.fill = fill
-            cell.font = data_font
-            cell.alignment = Alignment(vertical='center', wrap_text=False)
-            cell.border = thin_border()
+            # Header format
+            hdr_fmt = wb.add_format({
+                'bold': True, 'bg_color': _hex(hdr_hex), 'font_color': '#FFFFFF',
+                'border': 1, 'border_color': '#CCCCCC',
+                'align': 'center', 'valign': 'vcenter', 'text_wrap': True,
+                'font_size': 10,
+            })
+            # Data row formats (alternating)
+            row1_fmt = wb.add_format({
+                'bg_color': _hex(row1_hex), 'font_color': '#1A1A1A',
+                'border': 1, 'border_color': '#CCCCCC', 'font_size': 9,
+            })
+            row2_fmt = wb.add_format({
+                'bg_color': _hex(row2_hex), 'font_color': '#1A1A1A',
+                'border': 1, 'border_color': '#CCCCCC', 'font_size': 9,
+            })
 
-    for col in ws.columns:
-        max_len = 0
-        col_letter = get_column_letter(col[0].column)
-        for cell in col:
-            try:
-                if cell.value:
-                    max_len = max(max_len, len(str(cell.value)))
-            except:
-                pass
-        ws.column_dimensions[col_letter].width = min(max_len + 4, 60)
+            # Write header row with format
+            for col_idx, col_name in enumerate(df_out.columns):
+                ws.write(0, col_idx, col_name, hdr_fmt)
 
-    ws.freeze_panes = 'A2'
+            # Apply alternating row formats using set_row (no per-cell loop)
+            for row_idx in range(1, len(df_out) + 1):
+                fmt = row1_fmt if row_idx % 2 == 1 else row2_fmt
+                ws.set_row(row_idx, None, fmt)
+
+            # Auto-size columns from header names (cheap — no cell scanning)
+            for col_idx, col_name in enumerate(df_out.columns):
+                width = min(max(len(str(col_name)) + 4, 10), 40)
+                ws.set_column(col_idx, col_idx, width)
+
+            ws.freeze_panes(1, 0)
+
+    buf.seek(0)
+    return buf.getvalue()
 
 # ================================================================
 # MAIN PROCESSING FUNCTION
@@ -766,23 +784,6 @@ def process_file(file, excl_df_json):
     }
 
 # ================================================================
-# EXCEL WRITER
-# ================================================================
-def write_excel(sheets_dict):
-    buf = io.BytesIO()
-    with pd.ExcelWriter(buf, engine='openpyxl') as writer:
-        for sheet_name, df_out in sheets_dict.items():
-            df_out.to_excel(writer, sheet_name=sheet_name, index=False)
-        # Access workbook inside context (before save) — safe in pandas >= 1.3
-        wb = writer.book
-        for sheet_name, colours in SHEET_COLOURS.items():
-            if sheet_name in wb.sheetnames:
-                ws = wb[sheet_name]
-                format_sheet(ws, *colours)
-        # wb is saved automatically when 'with' block exits
-
-    buf.seek(0)
-    return buf.getvalue()
 
 # ================================================================
 # UI (UNCHANGED STRUCTURE)
@@ -820,17 +821,28 @@ if st.button("Run"):
                 st.success(f"✓ {f.name}")
                 st.dataframe(result['Summary'], use_container_width=True)
 
-                # Write formatted Excel
+                # Write formatted Excel (small sheets only)
                 try:
                     excel_bytes = write_excel(result)
                     out_name = f"CLEANED_{f.name}"
                     st.download_button(
-                        label=f"⬇ Download {out_name}",
+                        label=f"⬇ Download {out_name} (Sheets 1–5 + Summary)",
                         data=excel_bytes,
                         file_name=out_name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 except Exception as e:
                     st.error(f"Excel generation failed: {e}")
+
+                # Offer the large excluded sheet as CSV to avoid memory limits
+                excl_sheet = result.get('6 Excluded Items Review')
+                if excl_sheet is not None and len(excl_sheet):
+                    csv_bytes = excl_sheet.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label=f"⬇ Download Excluded Items ({len(excl_sheet):,} rows) — CSV",
+                        data=csv_bytes,
+                        file_name=f"EXCLUDED_{f.name.replace('.xlsx', '.csv')}",
+                        mime="text/csv"
+                    )
 
 st.markdown('</div>', unsafe_allow_html=True)
