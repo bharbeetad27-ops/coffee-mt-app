@@ -19,10 +19,8 @@ st.markdown("""
     font-family: 'Inter', sans-serif;
 }
 .hero {
-    background-image: linear-gradient(rgba(2,6,23,0.75), rgba(2,6,23,0.95)),
-        url("https://images.unsplash.com/photo-1498804103079-a6351b050096");
-    background-size: cover;
-    background-position: center;
+    background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+    border: 1px solid #1d4ed8;
     padding: 80px 40px;
     border-radius: 16px;
     margin-bottom: 40px;
@@ -288,26 +286,34 @@ _strict_coffee_signal_pattern = re.compile(
 STRICT_CHECK_HSNS = {'21011190', '21011200'}
 
 
-def build_excl_list_lookup(excl_df):
+@st.cache_data
+def build_excl_list_lookup(excl_df_json):
     """
-    Pre-process the user exclusion list into two structures for O(1) lookup:
-      - global_keywords: set of (keyword,) tuples with no HSN filter
-      - hsn_keywords: dict of hsn_str -> list of (keyword, reason)
-    Returns (global_set, hsn_dict, global_reasons_dict)
+    Pre-process the user exclusion list into two structures for O(1) lookup.
+    Accepts JSON string so st.cache_data can hash it.
+    Uses vectorised pandas — no iterrows().
     """
-    global_kws = {}   # keyword -> reason
-    hsn_kws    = {}   # hsn_str -> {keyword: reason}
+    excl_df = pd.read_json(io.StringIO(excl_df_json))
+    global_kws = {}
+    hsn_kws    = {}
 
-    for _, r in excl_df.iterrows():
-        kw  = str(r.get('KEYWORD', '')).upper().strip()
-        hsn = str(r.get('HSN_FILTER', '')).strip()
-        reason = str(r.get('REASON', 'Exclusion list match'))
-        if not kw:
-            continue
-        if hsn == '' or hsn == 'nan' or hsn == 'NAN':
-            global_kws[kw] = reason
-        else:
-            hsn_kws.setdefault(hsn, {})[kw] = reason
+    has_kw  = 'KEYWORD' in excl_df.columns
+    has_hsn = 'HSN_FILTER' in excl_df.columns
+    has_rsn = 'REASON' in excl_df.columns
+
+    kw_col  = excl_df['KEYWORD'].astype(str).str.upper().str.strip() if has_kw else pd.Series([''] * len(excl_df))
+    hsn_col = excl_df['HSN_FILTER'].astype(str).str.strip() if has_hsn else pd.Series([''] * len(excl_df))
+    rsn_col = excl_df['REASON'].astype(str) if has_rsn else pd.Series(['Exclusion list match'] * len(excl_df))
+
+    valid = kw_col != ''
+    is_global = valid & hsn_col.isin(['', 'nan', 'NAN'])
+    is_hsn    = valid & ~hsn_col.isin(['', 'nan', 'NAN'])
+
+    for kw, rsn in zip(kw_col[is_global], rsn_col[is_global]):
+        global_kws[kw] = rsn
+
+    for kw, hsn, rsn in zip(kw_col[is_hsn], hsn_col[is_hsn], rsn_col[is_hsn]):
+        hsn_kws.setdefault(hsn, {})[kw] = rsn
 
     return global_kws, hsn_kws
 
@@ -345,7 +351,6 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
 
     # ── 3. User exclusion list — global keywords ──
     if excl_global_kws:
-        # Build a single regex from all global user keywords
         user_global_pat = re.compile(
             '|'.join(re.escape(k) for k in excl_global_kws),
             re.IGNORECASE
@@ -353,16 +358,16 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
         mask = ~excluded
         if mask.any():
             hit = desc[mask].str.contains(user_global_pat, na=False)
-            # For reason: find first matching keyword per row (cheap since list is small)
-            for kw, rsn in excl_global_kws.items():
-                kw_hit = desc[mask].str.contains(re.escape(kw), na=False, regex=True)
-                idx = kw_hit[kw_hit & ~pd.Series(excluded[df.index.get_indexer(mask[mask].index)],
-                             index=mask[mask].index)].index
-                pos = df.index.get_indexer(idx)
-                excluded[pos] = True
-                for p in pos:
-                    if reason[p] == '':
-                        reason[p] = rsn
+            hit_idx = hit[hit].index
+            # Assign reason: find first matching keyword per row
+            for idx in hit_idx:
+                if not excluded[df.index.get_loc(idx)]:
+                    d = desc.at[idx]
+                    for kw, rsn in excl_global_kws.items():
+                        if kw in d:
+                            reason[df.index.get_loc(idx)] = rsn
+                            break
+                    excluded[df.index.get_loc(idx)] = True
 
     # ── 4. User exclusion list — HSN-specific keywords ──
     for hsn_str, kw_dict in excl_hsn_kws.items():
@@ -636,9 +641,12 @@ def clean_export(df_in):
     keep = [c for c in df_in.columns if c not in DROP_COLS]
     return df_in[keep].reset_index(drop=True)
 
-def process_file(file, excl_df):
-    # ── READ — explicit engine is faster than auto-detect ──
-    df = pd.read_excel(file, engine='openpyxl')
+def process_file(file, excl_df_json):
+    # ── READ — calamine is ~3-5x faster than openpyxl for large files ──
+    try:
+        df = pd.read_excel(file, engine='calamine')
+    except Exception:
+        df = pd.read_excel(file, engine='openpyxl')
     df.columns = df.columns.str.strip()
 
     # ── DETECT COLUMNS ──
@@ -658,8 +666,8 @@ def process_file(file, excl_df):
     df['_DESC_UP'] = df[desc_col].astype(str).str.upper().str.strip()
     df['_BUCKET']  = bucket_hsn_series(df['_HSN_INT'])
 
-    # ── EXCLUSIONS — fully vectorised, build lookup once per file ──
-    excl_global_kws, excl_hsn_kws = build_excl_list_lookup(excl_df)
+    # ── EXCLUSIONS — cached lookup, built once per unique exclusion file ──
+    excl_global_kws, excl_hsn_kws = build_excl_list_lookup(excl_df_json)
     df['_EXCLUDED'], df['_EXCL_REASON'] = apply_exclusions_vectorised(
         df, excl_global_kws, excl_hsn_kws
     )
@@ -762,21 +770,19 @@ def process_file(file, excl_df):
 # ================================================================
 def write_excel(sheets_dict):
     buf = io.BytesIO()
+    # Write all sheets first
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         for sheet_name, df_out in sheets_dict.items():
             df_out.to_excel(writer, sheet_name=sheet_name, index=False)
+        # Format in the same pass — no second load_workbook needed
+        wb = writer.book
+        for sheet_name, colours in SHEET_COLOURS.items():
+            if sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                format_sheet(ws, *colours)
 
     buf.seek(0)
-    wb = load_workbook(buf)
-    for sheet_name, colours in SHEET_COLOURS.items():
-        if sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            format_sheet(ws, *colours)
-
-    out = io.BytesIO()
-    wb.save(out)
-    out.seek(0)
-    return out.getvalue()
+    return buf.getvalue()
 
 # ================================================================
 # UI (UNCHANGED STRUCTURE)
@@ -801,9 +807,11 @@ if st.button("Run"):
         if 'KEYWORD' not in excl_df.columns:
             st.error("Exclusion list must have a KEYWORD column")
         else:
+            # Serialise once — cached lookup avoids rebuilding per file
+            excl_df_json = excl_df.to_json()
             for f in raws:
                 with st.spinner(f"Processing {f.name}..."):
-                    result = process_file(f, excl_df)
+                    result = process_file(f, excl_df_json)
 
                 if result is None:
                     continue
