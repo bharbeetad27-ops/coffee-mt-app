@@ -548,11 +548,11 @@ def convert_to_mt(row):
     desc = str(row.get('PRODUCT DESCRIPTION', '')).upper()
 
     if pd.isna(qty):
-        return None, 'BLANK'
+        return np.nan, 'BLANK'
     try:
         qty = float(qty)
     except (ValueError, TypeError):
-        return None, 'BLANK'
+        return np.nan, 'BLANK'
 
     # ── DIRECT ──
     if unit in DIRECT_KG:
@@ -614,9 +614,9 @@ def convert_to_mt(row):
                 return qty * float(ml[-1]) / 1_000_000, 'PARSED'
 
         except Exception:
-            return None, 'BLANK'
+            return np.nan, 'BLANK'
 
-    return None, 'BLANK'
+    return np.nan, 'BLANK'
 
 def convert_to_mt_vectorised(df):
     """
@@ -646,10 +646,10 @@ def convert_to_mt_vectorised(df):
     # Scalar fallback only for rows needing description parsing
     if is_parse.any():
         parsed_results = df[is_parse].apply(convert_to_mt, axis=1)
-        mt_vals[is_parse] = parsed_results.apply(lambda x: x[0])
-        status[is_parse]  = parsed_results.apply(lambda x: x[1])
+        mt_vals[is_parse] = parsed_results.apply(lambda x: x[0]).astype(float).values
+        status[is_parse]  = parsed_results.apply(lambda x: x[1]).values
 
-    return mt_vals.where(mt_vals.notna(), other=None), status
+    return mt_vals, status
 
 # ================================================================
 # EXCEL FORMATTING — xlsxwriter (memory-efficient, no cell-by-cell loop)
