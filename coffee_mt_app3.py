@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import io
 import re
 from openpyxl import load_workbook
@@ -257,87 +258,171 @@ HARDCODED_EXCLUSIONS = [
     ('TOMATO', ''),
 ]
 
-def build_excl_pattern(hsn_filter=''):
-    """Build regex pattern for all exclusions matching a given HSN filter (or global ones)."""
-    keywords = [k for k, h in HARDCODED_EXCLUSIONS if h == '' or h == str(hsn_filter)]
-    if not keywords:
-        return None
-    return '|'.join(re.escape(k) for k in keywords)
+# ================================================================
+# PRE-COMPILED PATTERNS — built once at startup, reused every file
+# ================================================================
 
-# Pre-build global pattern (no HSN filter)
-_global_excl_pattern = '|'.join(
-    re.escape(k) for k, h in HARDCODED_EXCLUSIONS if h == ''
+# Global hardcoded exclusion pattern (no HSN filter)
+_global_excl_pattern = re.compile(
+    '|'.join(re.escape(k) for k, h in HARDCODED_EXCLUSIONS if h == ''),
+    re.IGNORECASE
 )
 
-def is_hardcoded_excluded(desc_up, hsn_str):
-    """Returns True if row should be excluded based on hardcoded list."""
-    if re.search(_global_excl_pattern, desc_up):
-        return True
-    # HSN-specific checks
-    for kw, hsn_filter in HARDCODED_EXCLUSIONS:
-        if hsn_filter and hsn_filter == hsn_str:
-            if kw in desc_up:
-                return True
-    return False
+# Per-HSN hardcoded exclusion patterns — dict keyed by HSN string
+_hsn_excl_patterns = {}
+for _kw, _hsn in HARDCODED_EXCLUSIONS:
+    if _hsn:
+        if _hsn not in _hsn_excl_patterns:
+            _hsn_excl_patterns[_hsn] = []
+        _hsn_excl_patterns[_hsn].append(re.escape(_kw))
+_hsn_excl_compiled = {
+    hsn: re.compile('|'.join(patterns), re.IGNORECASE)
+    for hsn, patterns in _hsn_excl_patterns.items()
+}
 
-# ================================================================
-# EXCLUSION LIST FUNCTION (from uploaded Excel)
-# ================================================================
-def is_excl_list_excluded(desc_up, hsn_str, excl_df):
-    """Check against user-uploaded exclusion list Excel."""
+# Strict coffee signal pattern for HSN 21011190 / 21011200
+_strict_coffee_signal_pattern = re.compile(
+    r'COFFEE|CAPPUCCINO|CAPUCCINO|NESCAFE|BRU|LEVISTA|COTHAS|CONTINENTAL|NARASUS|TATA COFFEE|CHICORY|PREMIX',
+    re.IGNORECASE
+)
+STRICT_CHECK_HSNS = {'21011190', '21011200'}
+
+
+def build_excl_list_lookup(excl_df):
+    """
+    Pre-process the user exclusion list into two structures for O(1) lookup:
+      - global_keywords: set of (keyword,) tuples with no HSN filter
+      - hsn_keywords: dict of hsn_str -> list of (keyword, reason)
+    Returns (global_set, hsn_dict, global_reasons_dict)
+    """
+    global_kws = {}   # keyword -> reason
+    hsn_kws    = {}   # hsn_str -> {keyword: reason}
+
     for _, r in excl_df.iterrows():
-        keyword = str(r.get('KEYWORD', '')).upper().strip()
-        hsn_filter = str(r.get('HSN_FILTER', '')).strip()
-        if not keyword:
+        kw  = str(r.get('KEYWORD', '')).upper().strip()
+        hsn = str(r.get('HSN_FILTER', '')).strip()
+        reason = str(r.get('REASON', 'Exclusion list match'))
+        if not kw:
             continue
-        if keyword in desc_up:
-            if hsn_filter == '' or hsn_filter == 'nan' or hsn_filter == hsn_str:
-                return True, str(r.get('REASON', 'Exclusion list match'))
-    return False, ''
+        if hsn == '' or hsn == 'nan' or hsn == 'NAN':
+            global_kws[kw] = reason
+        else:
+            hsn_kws.setdefault(hsn, {})[kw] = reason
+
+    return global_kws, hsn_kws
+
 
 # ================================================================
-# COMBINED EXCLUSION CHECK
+# VECTORISED EXCLUSION — operates on entire DataFrame columns at once
+# No Python loops over rows. Called once per file.
 # ================================================================
-def should_exclude(desc, hsn, excl_df):
-    desc_up = str(desc).upper().strip()
-    hsn_str = str(int(hsn)) if pd.notna(hsn) else ''
+def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
+    """
+    Returns two Series: _EXCLUDED (bool) and _EXCL_REASON (str).
+    All operations are pandas/numpy vectorised — no row-level Python loops.
+    """
+    desc  = df['_DESC_UP']           # already upper-stripped
+    hsn_s = df['_HSN_INT'].astype(str)
 
-    # 1. Hardcoded exclusions first (structural, always apply)
-    if is_hardcoded_excluded(desc_up, hsn_str):
-        return True, 'Hardcoded exclusion'
+    n = len(df)
+    excluded = np.zeros(n, dtype=bool)
+    reason   = np.full(n, '', dtype=object)
 
-    # 2. User exclusion list
-    excl, reason = is_excl_list_excluded(desc_up, hsn_str, excl_df)
-    if excl:
-        return True, reason
+    # ── 1. Hardcoded global pattern (single compiled regex on whole column) ──
+    hit = desc.str.contains(_global_excl_pattern, na=False)
+    excluded |= hit.values
+    reason[hit.values] = 'Hardcoded exclusion'
 
-    # 3. Strict coffee signal check for 21011190 and 21011200
-    # These codes attract the most noise — require a positive coffee signal
-    if hsn_str in ('21011190', '21011200'):
-        coffee_signals = ['COFFEE', 'CAPPUCCINO', 'CAPUCCINO', 'NESCAFE', 'BRU',
-                          'LEVISTA', 'COTHAS', 'CONTINENTAL', 'NARASUS', 'TATA COFFEE',
-                          'CHICORY', 'PREMIX']
-        if not any(s in desc_up for s in coffee_signals):
-            return True, 'No coffee signal — strict check for HSN'
+    # ── 2. Hardcoded HSN-specific patterns ──
+    for hsn_str, pat in _hsn_excl_compiled.items():
+        mask = (hsn_s == hsn_str) & (~excluded)
+        if not mask.any():
+            continue
+        hit = desc[mask].str.contains(pat, na=False)
+        idx = hit[hit].index
+        excluded[df.index.get_indexer(idx)] = True
+        reason[df.index.get_indexer(idx)]   = 'Hardcoded exclusion (HSN-specific)'
 
-    return False, ''
+    # ── 3. User exclusion list — global keywords ──
+    if excl_global_kws:
+        # Build a single regex from all global user keywords
+        user_global_pat = re.compile(
+            '|'.join(re.escape(k) for k in excl_global_kws),
+            re.IGNORECASE
+        )
+        mask = ~excluded
+        if mask.any():
+            hit = desc[mask].str.contains(user_global_pat, na=False)
+            # For reason: find first matching keyword per row (cheap since list is small)
+            for kw, rsn in excl_global_kws.items():
+                kw_hit = desc[mask].str.contains(re.escape(kw), na=False, regex=True)
+                idx = kw_hit[kw_hit & ~pd.Series(excluded[df.index.get_indexer(mask[mask].index)],
+                             index=mask[mask].index)].index
+                pos = df.index.get_indexer(idx)
+                excluded[pos] = True
+                for p in pos:
+                    if reason[p] == '':
+                        reason[p] = rsn
+
+    # ── 4. User exclusion list — HSN-specific keywords ──
+    for hsn_str, kw_dict in excl_hsn_kws.items():
+        hsn_mask = (hsn_s == hsn_str) & (~pd.Series(excluded, index=df.index))
+        if not hsn_mask.any():
+            continue
+        for kw, rsn in kw_dict.items():
+            hit = desc[hsn_mask].str.contains(re.escape(kw), na=False, regex=True)
+            idx = hit[hit].index
+            pos = df.index.get_indexer(idx)
+            excluded[pos] = True
+            for p in pos:
+                if reason[p] == '':
+                    reason[p] = rsn
+
+    # ── 5. Strict coffee signal check for 21011190 / 21011200 ──
+    strict_mask = hsn_s.isin(STRICT_CHECK_HSNS) & (~pd.Series(excluded, index=df.index))
+    if strict_mask.any():
+        has_signal = desc[strict_mask].str.contains(_strict_coffee_signal_pattern, na=False)
+        no_signal  = strict_mask & (~has_signal.reindex(df.index, fill_value=False))
+        pos = df.index.get_indexer(no_signal[no_signal].index)
+        excluded[pos] = True
+        for p in pos:
+            if reason[p] == '':
+                reason[p] = 'No coffee signal — strict check for HSN'
+
+    return pd.Series(excluded, index=df.index), pd.Series(reason, index=df.index)
 
 # ================================================================
-# HSN BUCKETING
+# HSN BUCKETING — vectorised
 # ================================================================
+def norm_hsn_series(series):
+    """Vectorised HSN normalisation — no Python loop."""
+    return (
+        series.astype(str)
+              .str.replace(r'\s+', '', regex=True)
+              .str.split('.').str[0]
+              .pipe(pd.to_numeric, errors='coerce')
+              .fillna(0)
+              .astype(int)
+    )
+
+def bucket_hsn_series(hsn_series):
+    """Vectorised HSN bucketing using np.select — much faster than .apply()."""
+    conditions = [
+        hsn_series.isin(SOLUBLE_COFFEE_HSN),
+        hsn_series.isin(CHICORY_PREMIX_HSN),
+        hsn_series.isin(CHICORY_ONLY_HSN),
+        hsn_series.isin(PURE_CHICORY_HSN),
+        hsn_series.isin(GROUND_COFFEE_HSN),
+    ]
+    choices = ['SOLUBLE_COFFEE', 'CHICORY_PREMIX', 'CHICORY_ONLY', 'PURE_CHICORY', 'GROUND_COFFEE']
+    return pd.Series(np.select(conditions, choices, default='OTHER'), index=hsn_series.index)
+
+# Keep scalar versions for any legacy calls
 def norm_hsn(v):
     try:
         return int(str(v).replace(' ', '').strip().split('.')[0])
     except:
         return 0
-
-def bucket_hsn(hsn_int):
-    if hsn_int in SOLUBLE_COFFEE_HSN:   return 'SOLUBLE_COFFEE'
-    if hsn_int in CHICORY_PREMIX_HSN:   return 'CHICORY_PREMIX'
-    if hsn_int in CHICORY_ONLY_HSN:     return 'CHICORY_ONLY'
-    if hsn_int in PURE_CHICORY_HSN:     return 'PURE_CHICORY'
-    if hsn_int in GROUND_COFFEE_HSN:    return 'GROUND_COFFEE'
-    return 'OTHER'
 
 # ================================================================
 # WRONG HSN SCANNER
@@ -444,9 +529,10 @@ CHICORY_SIGNAL_PATTERN = (
 )
 
 # ================================================================
-# MT CONVERSION (UNCHANGED)
+# MT CONVERSION — vectorised (logic unchanged, no apply loop)
 # ================================================================
 def convert_to_mt(row):
+    """Scalar version kept for reference — not called in hot path."""
     qty = row.get('STANDARD QUANTITY')
     unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
     if pd.isna(qty):
@@ -460,6 +546,31 @@ def convert_to_mt(row):
     if unit in ('MTS', 'MT'):
         return qty, 'DIRECT'
     return None, 'BLANK'
+
+def convert_to_mt_vectorised(df):
+    """
+    Vectorised MT conversion. Returns (mt_series, status_series).
+    Logic is identical to convert_to_mt — just no Python loop.
+    """
+    qty  = pd.to_numeric(df.get('STANDARD QUANTITY', pd.Series(dtype=float)), errors='coerce')
+    unit = df.get('STANDARD QUANTITY UNIT', pd.Series(dtype=str)).astype(str).str.upper().str.strip()
+
+    is_blank  = qty.isna()
+    is_kgs    = unit.isin(['KGS', 'KG']) & ~is_blank
+    is_mt     = unit.isin(['MTS', 'MT']) & ~is_blank
+
+    mt_vals = np.where(is_kgs, qty / 1000,
+              np.where(is_mt,  qty,
+                       np.nan))
+
+    status = np.where(is_blank, 'BLANK',
+             np.where(is_kgs | is_mt, 'DIRECT',
+                      'BLANK'))
+
+    return (
+        pd.Series(np.where(np.isnan(mt_vals), None, mt_vals), index=df.index),
+        pd.Series(status, index=df.index)
+    )
 
 # ================================================================
 # EXCEL FORMATTING (same colour palette as original)
@@ -526,11 +637,12 @@ def clean_export(df_in):
     return df_in[keep].reset_index(drop=True)
 
 def process_file(file, excl_df):
-    df = pd.read_excel(file)
+    # ── READ — explicit engine is faster than auto-detect ──
+    df = pd.read_excel(file, engine='openpyxl')
     df.columns = df.columns.str.strip()
 
-    # Detect column names
-    hs_col  = next((c for c in df.columns if 'HS' in c.upper() and 'CODE' in c.upper()), None)
+    # ── DETECT COLUMNS ──
+    hs_col = next((c for c in df.columns if 'HS' in c.upper() and 'CODE' in c.upper()), None)
     if not hs_col:
         hs_col = next((c for c in df.columns if 'HS' in c.upper()), None)
     desc_col = next((c for c in df.columns if 'PRODUCT' in c.upper() and 'DESC' in c.upper()), None)
@@ -541,22 +653,18 @@ def process_file(file, excl_df):
         st.error(f"Could not find HS CODE or PRODUCT DESCRIPTION columns in {file.name}")
         return None
 
-    # ── NORMALISE ──
-    df['_HSN_INT'] = df[hs_col].apply(norm_hsn)
+    # ── NORMALISE — vectorised, no .apply() ──
+    df['_HSN_INT'] = norm_hsn_series(df[hs_col])
     df['_DESC_UP'] = df[desc_col].astype(str).str.upper().str.strip()
-    df['_BUCKET']  = df['_HSN_INT'].apply(bucket_hsn)
+    df['_BUCKET']  = bucket_hsn_series(df['_HSN_INT'])
 
-    # ── EXCLUSIONS ──
-    excl_results = [
-        should_exclude(desc, hsn, excl_df)
-        for desc, hsn in zip(df['_DESC_UP'], df['_HSN_INT'])
-    ]
-    df['_EXCLUDED']     = [x[0] for x in excl_results]
-    df['_EXCL_REASON']  = [x[1] for x in excl_results]
+    # ── EXCLUSIONS — fully vectorised, build lookup once per file ──
+    excl_global_kws, excl_hsn_kws = build_excl_list_lookup(excl_df)
+    df['_EXCLUDED'], df['_EXCL_REASON'] = apply_exclusions_vectorised(
+        df, excl_global_kws, excl_hsn_kws
+    )
 
-    # ── WRONG HSN SCANNER ──
-    # Now scans ground coffee codes too (systemic misfiling confirmed across 25 files)
-    # Does NOT scan 21013090 / 21012020 (pure chicory — INSTANT CHICORY is not soluble coffee)
+    # ── WRONG HSN SCANNER — already vectorised via str.contains ──
     df_wrong = find_wrong_hsn_rows(df, hs_col)
     df_wrong = df_wrong[~df_wrong['_EXCLUDED']].copy()
     df_wrong['_SOURCE'] = 'Wrong HSN — flagged'
@@ -568,9 +676,11 @@ def process_file(file, excl_df):
     df_correct['_SOURCE'] = 'Correct HSN'
 
     df_sheet1 = pd.concat([df_correct, df_wrong], ignore_index=True)
-    df_sheet1['MT'], df_sheet1['MT_STATUS'] = zip(*df_sheet1.apply(convert_to_mt, axis=1))
 
-    # ── CHICORY CLASSIFICATION ──
+    # ── MT CONVERSION — vectorised, no .apply() ──
+    df_sheet1['MT'], df_sheet1['MT_STATUS'] = convert_to_mt_vectorised(df_sheet1)
+
+    # ── CHICORY SIGNAL DETECTION — vectorised str.contains ──
     df_sheet1['_IS_CHICORY_SIGNAL'] = df_sheet1['_DESC_UP'].str.contains(
         CHICORY_SIGNAL_PATTERN, na=False, regex=True
     )
@@ -578,6 +688,8 @@ def process_file(file, excl_df):
     df_chicory_pool = df_sheet1[df_sheet1['_IS_CHICORY_SIGNAL']].copy()
 
     def apply_classification(df_in):
+        # classify_chicory_row uses .apply() but only on ~200-400 chicory rows,
+        # not the full 70k — acceptable cost
         results = df_in['_DESC_UP'].apply(classify_chicory_row)
         df_in = df_in.copy()
         df_in['BLEND_CATEGORY'] = results.apply(lambda x: x[0] if x else 'ASSUMED')
@@ -589,7 +701,6 @@ def process_file(file, excl_df):
 
     df_chicory_pool = apply_classification(df_chicory_pool)
 
-    # Also classify 21011200 premix rows not already in chicory pool
     df_premix = df_sheet1[
         (df_sheet1['_BUCKET'] == 'CHICORY_PREMIX') &
         (~df_sheet1.index.isin(df_chicory_pool.index))
@@ -604,9 +715,8 @@ def process_file(file, excl_df):
 
     # ── SHEET 5: CHICORY ONLY EXPORTS (21013010) ──
     df_chicory_only = df[df['_BUCKET'] == 'CHICORY_ONLY'].copy()
-    df_chicory_only['MT'], df_chicory_only['MT_STATUS'] = zip(
-        *df_chicory_only.apply(convert_to_mt, axis=1)
-    ) if len(df_chicory_only) else ([], [])
+    if len(df_chicory_only):
+        df_chicory_only['MT'], df_chicory_only['MT_STATUS'] = convert_to_mt_vectorised(df_chicory_only)
 
     # ── SHEET 6: EXCLUDED ITEMS REVIEW ──
     df_excl_from_target = df[
@@ -614,12 +724,10 @@ def process_file(file, excl_df):
     ].copy()
     df_excl_from_target['_EXCL_SOURCE'] = 'Keyword exclusion — target HSN'
 
-    # Other HSN rows scanned but not flagged as soluble
     scannable_mask = ~df['_BUCKET'].isin([
         'SOLUBLE_COFFEE', 'CHICORY_PREMIX', 'CHICORY_ONLY', 'PURE_CHICORY'
     ])
     df_other_not_flagged = df[scannable_mask].copy()
-    # Remove the ones that WERE flagged (they're in sheet 1)
     df_other_not_flagged = df_other_not_flagged[
         ~df_other_not_flagged.index.isin(df_wrong.index)
     ].copy()
@@ -631,12 +739,12 @@ def process_file(file, excl_df):
 
     # ── SUMMARY ──
     summary_df = pd.DataFrame([
-        {'Sheet': '1 All Soluble Coffee',     'Rows': len(df_sheet1),       'Notes': 'Correct HSN + wrong HSN rescued rows'},
-        {'Sheet': '2 Chicory Explicit Ratio', 'Rows': len(df_chic_explicit),'Notes': 'Ratio or chicory word in product description'},
-        {'Sheet': '3 Chicory Known Brand',    'Rows': len(df_chic_known),   'Notes': 'Matched to brand reference table'},
-        {'Sheet': '4 Chicory Assumed',        'Rows': len(df_chic_assumed), 'Notes': 'Chicory signal but no confirmed ratio'},
-        {'Sheet': '5 Chicory Only Exports',   'Rows': len(df_chicory_only), 'Notes': 'HSN 21013010 — pure roasted chicory exports'},
-        {'Sheet': '6 Excluded Items Review',  'Rows': len(df_excluded_review),'Notes': 'Non-soluble products removed'},
+        {'Sheet': '1 All Soluble Coffee',     'Rows': len(df_sheet1),        'Notes': 'Correct HSN + wrong HSN rescued rows'},
+        {'Sheet': '2 Chicory Explicit Ratio', 'Rows': len(df_chic_explicit), 'Notes': 'Ratio or chicory word in product description'},
+        {'Sheet': '3 Chicory Known Brand',    'Rows': len(df_chic_known),    'Notes': 'Matched to brand reference table'},
+        {'Sheet': '4 Chicory Assumed',        'Rows': len(df_chic_assumed),  'Notes': 'Chicory signal but no confirmed ratio'},
+        {'Sheet': '5 Chicory Only Exports',   'Rows': len(df_chicory_only),  'Notes': 'HSN 21013010 — pure roasted chicory exports'},
+        {'Sheet': '6 Excluded Items Review',  'Rows': len(df_excluded_review), 'Notes': 'Non-soluble products removed'},
     ])
 
     return {
