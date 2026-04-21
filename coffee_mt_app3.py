@@ -533,9 +533,15 @@ CHICORY_SIGNAL_PATTERN = (
 # ================================================================
 # MT CONVERSION
 # ================================================================
-STOP_WORDS = ['OF', 'WITH', 'AND', 'FOR', 'IN', 'NET', 'GROSS', 'EACH',
+STOP_WORDS = ['OF', 'WITH', 'AND', 'FOR', 'NET', 'GROSS', 'EACH',
               'PER', 'PACK', 'PKT', 'POUCH', 'BAG', 'BOX', 'CASE', 'CARTON',
               'SACHET', 'JAR', 'TIN', 'CAN', 'BOTTLE', 'UNIT', 'ASSORTED']
+
+# Pre-compiled word-boundary stop pattern — avoids substring truncation
+# e.g. 'IN' must not match inside 'INSTANT', 'AND' must not match inside 'BRAND'
+_STOP_PAT = re.compile(
+    r'\b(' + '|'.join(re.escape(w) for w in STOP_WORDS) + r')\b'
+)
 
 PARSE_UNITS = {'NOS', 'PCS', 'CTM', 'CTN'}
 DIRECT_KG   = {'KGS', 'KG'}
@@ -565,51 +571,130 @@ def convert_to_mt(row):
     # ── PARSING (NOS/PCS/CTM/CTN) ──
     if unit in PARSE_UNITS:
         try:
-            clean = desc
-            for sw in STOP_WORDS:
-                if sw in clean:
-                    clean = clean.split(sw)[0]
-            clean = clean.replace(' X ', 'X').replace('*', 'X')
+            # Remove stop words entirely so qty after POUCH/BAG/JAR etc. is kept
+            clean = _STOP_PAT.sub(' ', desc).strip()
+            clean = re.sub(r'\s+', ' ', clean)
+            clean = clean.replace(' X ', 'X').replace(' x ', 'X').replace('*', 'X')
 
-            m = re.search(r'(\d+)\((\d+)X(\d+(?:\.\d+)?)G\)', clean)
+            # ── KG-LEVEL patterns first (avoid confusing 1KG with grams) ──
+
+            # "1 KG X 16" / "(1KGX16)" / "1KG X 16 NOS" — premix bulk packs
+            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*X\s*(\d+)', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)), 'PARSED'
+
+            # "3.6KG X 6PCS" / "3.6KGX6"
+            m = re.search(r'(\d+(?:\.\d+)?)KGX(\d+)', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)), 'PARSED'
+
+            # "NX KG" e.g. "12X500G" already caught below; "1X20KG"
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)KG\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)), 'PARSED'
+
+            # Explicit KGS NET e.g. "2.16KGS NET" — use carton net weight directly
+            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)), 'PARSED'
+
+            # ── 3-LEVEL gram patterns ──
+
+            # "18GM X 6 X 12" / "22GMX6X12"
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GMS?\s*X\s*(\d+)\s*X\s*(\d+)', clean, re.IGNORECASE)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
 
-            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)KG', clean)
+            m = re.search(r'(\d+(?:\.\d+)?)\s*G\s*X\s*(\d+)\s*X\s*(\d+)', clean, re.IGNORECASE)
             if m:
-                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
 
-            m = re.search(r'(\d+(?:\.\d+)?)KGX(\d+)', clean)
+            # N(NxNG) e.g. "6(96X3.2G)"
+            m = re.search(r'(\d+)\((\d+)X(\d+(?:\.\d+)?)G\)', clean, re.IGNORECASE)
             if m:
-                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
 
-            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)G', clean)
+            # 10MONO CTNS X 150STICK X 1.8GM — Nx150Nx1.8GM
+            m = re.search(r'(\d+)\D+X\s*(\d+)\D+X\s*(\d+(?:\.\d+)?)\s*GMS?\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
+
+            # ── 2-LEVEL gram patterns ──
+
+            # Parenthesised: (48X16G) (48X16GM) (200GX24)
+            m = re.search(r'\((\d+(?:\.\d+)?)\s*GMS?X(\d+)\)', clean, re.IGNORECASE)
             if m:
                 return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            m = re.search(r'(\d+)X(\d+)(?![A-Z])', clean)
+            m = re.search(r'\((\d+)X(\d+(?:\.\d+)?)\s*GMS?\)', clean, re.IGNORECASE)
             if m:
-                val2 = float(m.group(2))
-                if val2 < 2000:
-                    return qty * float(m.group(1)) * val2 / 1_000_000, 'PARSED'
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean)
+            # "NxGMS" / "NxGM" / "NxG" — e.g. "45 GMSX30", "90GX24", "12X50G"
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GMS\s*X\s*(\d+)', clean, re.IGNORECASE)
             if m:
-                return qty * float(m.group(1)) / 1000, 'PARSED'
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
 
-            m = re.search(r'(\d+(?:\.\d+)?)\s*GRM', clean)
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GMX(\d+)', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GX(\d+)', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)\s*GMS\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)\s*GM\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)\s*G\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            # ML: (20MLX36)
+            m = re.search(r'(\d+(?:\.\d+)?)\s*MLX(\d+)', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)\s*ML\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            # ── SINGLE WEIGHT (no multiplier) ──
+            # "42 GRAMS" spelled out
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GRAMS?\b', clean, re.IGNORECASE)
             if m:
                 return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            grams = re.findall(r'(\d+(?:\.\d+)?)\s*G', clean)
-            if grams:
-                return qty * float(grams[-1]) / 1_000_000, 'PARSED'
+            # GRM variant
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GRM\b', clean, re.IGNORECASE)
+            if m:
+                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
 
-            kg = re.findall(r'(\d+(?:\.\d+)?)\s*KG', clean)
+            # GMS before GM before G (specificity order)
+            gms = re.findall(r'(\d+(?:\.\d+)?)\s*GMS\b', clean, re.IGNORECASE)
+            if gms:
+                return qty * float(gms[-1]) / 1_000_000, 'PARSED'
+
+            gm = re.findall(r'(\d+(?:\.\d+)?)\s*GM\b', clean, re.IGNORECASE)
+            if gm:
+                return qty * float(gm[-1]) / 1_000_000, 'PARSED'
+
+            g = re.findall(r'(\d+(?:\.\d+)?)\s*G\b', clean, re.IGNORECASE)
+            if g:
+                val = float(g[-1])
+                if val < 5000:  # sanity — not a year or batch number
+                    return qty * val / 1_000_000, 'PARSED'
+
+            kg = re.findall(r'(\d+(?:\.\d+)?)\s*KG\b', clean, re.IGNORECASE)
             if kg:
-                return qty * float(kg[-1]) / 1000, 'PARSED'
+                return qty * float(kg[-1]), 'PARSED'
 
-            ml = re.findall(r'(\d+(?:\.\d+)?)\s*ML', clean)
+            ml = re.findall(r'(\d+(?:\.\d+)?)\s*ML\b', clean, re.IGNORECASE)
             if ml:
                 return qty * float(ml[-1]) / 1_000_000, 'PARSED'
 
