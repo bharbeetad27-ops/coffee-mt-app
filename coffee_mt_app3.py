@@ -770,16 +770,16 @@ def process_file(file, excl_df_json):
 # ================================================================
 def write_excel(sheets_dict):
     buf = io.BytesIO()
-    # Write all sheets first
     with pd.ExcelWriter(buf, engine='openpyxl') as writer:
         for sheet_name, df_out in sheets_dict.items():
             df_out.to_excel(writer, sheet_name=sheet_name, index=False)
-        # Format in the same pass — no second load_workbook needed
+        # Access workbook inside context (before save) — safe in pandas >= 1.3
         wb = writer.book
         for sheet_name, colours in SHEET_COLOURS.items():
             if sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
                 format_sheet(ws, *colours)
+        # wb is saved automatically when 'with' block exits
 
     buf.seek(0)
     return buf.getvalue()
@@ -821,14 +821,16 @@ if st.button("Run"):
                 st.dataframe(result['Summary'], use_container_width=True)
 
                 # Write formatted Excel
-                excel_bytes = write_excel(result)
-                out_name = f"CLEANED_{f.name}"
-
-                st.download_button(
-                    label=f"⬇ Download {out_name}",
-                    data=excel_bytes,
-                    file_name=out_name,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
+                try:
+                    excel_bytes = write_excel(result)
+                    out_name = f"CLEANED_{f.name}"
+                    st.download_button(
+                        label=f"⬇ Download {out_name}",
+                        data=excel_bytes,
+                        file_name=out_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                except Exception as e:
+                    st.error(f"Excel generation failed: {e}")
 
 st.markdown('</div>', unsafe_allow_html=True)
