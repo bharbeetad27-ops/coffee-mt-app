@@ -531,48 +531,125 @@ CHICORY_SIGNAL_PATTERN = (
 )
 
 # ================================================================
-# MT CONVERSION — vectorised (logic unchanged, no apply loop)
+# MT CONVERSION
 # ================================================================
+STOP_WORDS = ['OF', 'WITH', 'AND', 'FOR', 'IN', 'NET', 'GROSS', 'EACH',
+              'PER', 'PACK', 'PKT', 'POUCH', 'BAG', 'BOX', 'CASE', 'CARTON',
+              'SACHET', 'JAR', 'TIN', 'CAN', 'BOTTLE', 'UNIT', 'ASSORTED']
+
+PARSE_UNITS = {'NOS', 'PCS', 'CTM', 'CTN'}
+DIRECT_KG   = {'KGS', 'KG'}
+DIRECT_MT   = {'MTS', 'MT'}
+DIRECT_ML   = {'ML', 'MLT', 'LTR'}
+
 def convert_to_mt(row):
-    """Scalar version kept for reference — not called in hot path."""
-    qty = row.get('STANDARD QUANTITY')
-    unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper()
+    qty  = row.get('STANDARD QUANTITY')
+    unit = str(row.get('STANDARD QUANTITY UNIT', '')).upper().strip()
+    desc = str(row.get('PRODUCT DESCRIPTION', '')).upper()
+
     if pd.isna(qty):
         return None, 'BLANK'
     try:
         qty = float(qty)
-    except:
+    except (ValueError, TypeError):
         return None, 'BLANK'
-    if unit in ('KGS', 'KG'):
+
+    # ── DIRECT ──
+    if unit in DIRECT_KG:
         return qty / 1000, 'DIRECT'
-    if unit in ('MTS', 'MT'):
+    if unit in DIRECT_MT:
         return qty, 'DIRECT'
+    if unit in DIRECT_ML:
+        return qty / 1_000_000, 'DIRECT'
+
+    # ── PARSING (NOS/PCS/CTM/CTN) ──
+    if unit in PARSE_UNITS:
+        try:
+            clean = desc
+            for sw in STOP_WORDS:
+                if sw in clean:
+                    clean = clean.split(sw)[0]
+            clean = clean.replace(' X ', 'X').replace('*', 'X')
+
+            m = re.search(r'(\d+)\((\d+)X(\d+(?:\.\d+)?)G\)', clean)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) * float(m.group(3)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)KG', clean)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
+
+            m = re.search(r'(\d+(?:\.\d+)?)KGX(\d+)', clean)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+(?:\.\d+)?)G', clean)
+            if m:
+                return qty * float(m.group(1)) * float(m.group(2)) / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+)X(\d+)(?![A-Z])', clean)
+            if m:
+                val2 = float(m.group(2))
+                if val2 < 2000:
+                    return qty * float(m.group(1)) * val2 / 1_000_000, 'PARSED'
+
+            m = re.search(r'(\d+(?:\.\d+)?)\s*KGS?\s*NET', clean)
+            if m:
+                return qty * float(m.group(1)) / 1000, 'PARSED'
+
+            m = re.search(r'(\d+(?:\.\d+)?)\s*GRM', clean)
+            if m:
+                return qty * float(m.group(1)) / 1_000_000, 'PARSED'
+
+            grams = re.findall(r'(\d+(?:\.\d+)?)\s*G', clean)
+            if grams:
+                return qty * float(grams[-1]) / 1_000_000, 'PARSED'
+
+            kg = re.findall(r'(\d+(?:\.\d+)?)\s*KG', clean)
+            if kg:
+                return qty * float(kg[-1]) / 1000, 'PARSED'
+
+            ml = re.findall(r'(\d+(?:\.\d+)?)\s*ML', clean)
+            if ml:
+                return qty * float(ml[-1]) / 1_000_000, 'PARSED'
+
+        except Exception:
+            return None, 'BLANK'
+
     return None, 'BLANK'
 
 def convert_to_mt_vectorised(df):
     """
-    Vectorised MT conversion. Returns (mt_series, status_series).
-    Logic is identical to convert_to_mt — just no Python loop.
+    Hybrid: vectorised for DIRECT units (vast majority of rows),
+    scalar fallback via apply() only for PARSE_UNITS rows.
+    PARSED rows are typically <5% of data so the apply cost is small.
     """
     qty  = pd.to_numeric(df.get('STANDARD QUANTITY', pd.Series(dtype=float)), errors='coerce')
     unit = df.get('STANDARD QUANTITY UNIT', pd.Series(dtype=str)).astype(str).str.upper().str.strip()
 
-    is_blank  = qty.isna()
-    is_kgs    = unit.isin(['KGS', 'KG']) & ~is_blank
-    is_mt     = unit.isin(['MTS', 'MT']) & ~is_blank
+    is_blank = qty.isna()
+    is_kgs   = unit.isin(DIRECT_KG)  & ~is_blank
+    is_mt    = unit.isin(DIRECT_MT)  & ~is_blank
+    is_ml    = unit.isin(DIRECT_ML)  & ~is_blank
+    is_parse = unit.isin(PARSE_UNITS) & ~is_blank
 
-    mt_vals = np.where(is_kgs, qty / 1000,
-              np.where(is_mt,  qty,
-                       np.nan))
+    mt_vals = pd.Series(np.nan, index=df.index)
+    status  = pd.Series('BLANK', index=df.index)
 
-    status = np.where(is_blank, 'BLANK',
-             np.where(is_kgs | is_mt, 'DIRECT',
-                      'BLANK'))
+    mt_vals[is_kgs] = qty[is_kgs] / 1000
+    status[is_kgs]  = 'DIRECT'
+    mt_vals[is_mt]  = qty[is_mt]
+    status[is_mt]   = 'DIRECT'
+    mt_vals[is_ml]  = qty[is_ml] / 1_000_000
+    status[is_ml]   = 'DIRECT'
 
-    return (
-        pd.Series(np.where(np.isnan(mt_vals), None, mt_vals), index=df.index),
-        pd.Series(status, index=df.index)
-    )
+    # Scalar fallback only for rows needing description parsing
+    if is_parse.any():
+        parsed_results = df[is_parse].apply(convert_to_mt, axis=1)
+        mt_vals[is_parse] = parsed_results.apply(lambda x: x[0])
+        status[is_parse]  = parsed_results.apply(lambda x: x[1])
+
+    return mt_vals.where(mt_vals.notna(), other=None), status
 
 # ================================================================
 # EXCEL FORMATTING — xlsxwriter (memory-efficient, no cell-by-cell loop)
