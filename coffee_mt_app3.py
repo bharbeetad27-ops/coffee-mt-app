@@ -984,7 +984,7 @@ if st.button("Run"):
                 st.dataframe(result['Summary'], use_container_width=True)
 
                 # Write formatted Excel (small sheets only)
-               try:
+                    try:
                     excel_bytes = write_excel(result)
                     out_name = f"CLEANED_{f.name}"
                     st.download_button(
