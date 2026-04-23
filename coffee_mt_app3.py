@@ -984,14 +984,15 @@ if st.button("Run"):
                 st.dataframe(result['Summary'], use_container_width=True)
 
                 # Write formatted Excel (small sheets only)
-                try:
+               try:
                     excel_bytes = write_excel(result)
                     out_name = f"CLEANED_{f.name}"
                     st.download_button(
                         label=f"⬇ Download {out_name} (Sheets 1–5 + Summary)",
                         data=excel_bytes,
                         file_name=out_name,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"dl_excel_{f.name}"
                     )
                 except Exception as e:
                     st.error(f"Excel generation failed: {e}")
@@ -1004,7 +1005,8 @@ if st.button("Run"):
                         label=f"⬇ Download Excluded Items ({len(excl_sheet):,} rows) — CSV",
                         data=csv_bytes,
                         file_name=f"EXCLUDED_{f.name.replace('.xlsx', '.csv')}",
-                        mime="text/csv"
+                        mime="text/csv",
+                        key=f"dl_csv_{f.name}"
                     )
 
 st.markdown('</div>', unsafe_allow_html=True)
