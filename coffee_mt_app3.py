@@ -237,7 +237,9 @@ HARDCODED_EXCLUSIONS = [
     ('ATTA NOODLES', ''),
     # Misc non-product rows
     ('TAX INVOICE', ''),
-    ('FREE SAMPLE', ''),
+    # NOTE: 'FREE SAMPLE' moved to QUANTITY_AWARE_EXCLUSIONS below —
+    # high-qty FOC samples (e.g. 200 PCS, 4800 PCS) are commercially
+    # significant and should reach MT conversion, not be junked here.
     # Industrial
     ('DRIVE 68', ''),
     # 21011200 specific: lemongrass tea, dry ginger cappi
@@ -252,6 +254,60 @@ HARDCODED_EXCLUSIONS = [
     ('HOT & SWEET', ''),
     ('TOMATO', ''),
 ]
+
+# ================================================================
+# QUANTITY-AWARE EXCLUSIONS
+# These keywords trigger junk routing ONLY when quantity is below
+# the threshold.  High-qty rows with these keywords are commercially
+# significant (e.g. 4800 PCS coffee sachets labelled "sample") and
+# must survive to MT conversion.
+#
+# Schema: (keyword_upper, qty_threshold, junk_reason)
+# A row is excluded only when:
+#   keyword in description.upper()  AND  qty < qty_threshold
+# ================================================================
+QUANTITY_AWARE_EXCLUSIONS = [
+    # Keyword                   Qty threshold   Reason
+    ('FREE SAMPLE',             50,             'FOC sample below commercial qty threshold'),
+    ('SAMPLE',                  10,             'Sample shipment below commercial qty threshold'),
+    ('TEST REPORT',             5,              'QC/test sample'),
+    ('FOR EXHIBITION',          5,              'Exhibition goods — NCV'),
+    ('EXHIBITION GOODS',        5,              'Exhibition goods — NCV'),
+    ('NO COMMERCIAL VALUE',     5,              'Explicitly NCV'),
+    ('NCV',                     5,              'Explicitly NCV — no commercial value'),
+    ('NOT FOR SALE',            20,             'Marked not for sale below commercial qty'),
+    ('FREE OF COST',            20,             'FOC shipment below commercial qty threshold'),
+    ('PROMOTIONAL MATERIAL',    20,             'Promotional material below commercial qty'),
+    ('GIFT',                    5,              'Gift/personal-use shipment'),
+    ('PERSONAL USE',            5,              'Personal-use — not commercial trade'),
+]
+
+# ================================================================
+# ADMIN/REFERENCE ROW DETECTION
+# Rows that are purely administrative (invoice refs, GSTIN rows,
+# permit numbers) — these are NEVER product shipments and must
+# always go to junk regardless of quantity.
+# ================================================================
+_ADMIN_PATTERNS = re.compile(
+    r'\b(?:GSTIN|GSTN|GST\s*NO|TAX\s+INV(?:OICE)?|INV\s*NO|INVOICE\s*NO'
+    r'|ICO\s+SI\s+NUMBER|ICO\s+MARK\s+NO|PERMIT\s+NUMBER|BATCH\s+NO\b'
+    r'|MFG\.\s*DT|EXP\.\s*DT'
+    r'|MANUFACTURER\s*[-:]\s*[A-Z]'
+    r'|SUPPLIER\s*[-:]\s*[A-Z]'
+    r'|VENDOR\s*[-:]'
+    r'|SUPP\s*:'
+    r'|SUPPORTING\s+MFG'
+    r'|NAME\s+SUPPLIER'
+    r'|SUPPLIER\s+NAME\s*[-:]'
+    r'|SUP\s*-)',
+    re.IGNORECASE,
+)
+
+# Merchandise giveaways — not coffee export volume
+_MERCH_PATTERNS = re.compile(
+    r'\b(?:TSHIRT|T-SHIRT|MUG\b|SAMPLING\s+TABLE|PROMOTIONAL\s+MATERIAL)',
+    re.IGNORECASE,
+)
 
 # ================================================================
 # PRE-COMPILED PATTERNS — built once at startup, reused every file
@@ -323,22 +379,55 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
     """
     Returns two Series: _EXCLUDED (bool) and _EXCL_REASON (str).
     All operations are pandas/numpy vectorised — no row-level Python loops.
+
+    Step order:
+      0  — Admin/reference rows (GSTIN, TAX INVOICE, PERMIT NO, etc.) → always junk
+      0a — Merchandise giveaways (mugs, T-shirts) → always junk
+      1  — Hardcoded global keyword exclusions
+      2  — Hardcoded HSN-specific keyword exclusions
+      3  — User exclusion list global keywords
+      4  — User exclusion list HSN-specific keywords
+      5  — Strict coffee signal check for 21011190 / 21011200
+      6  — Quantity-aware keyword exclusions (SAMPLE, FREE OF COST, NCV, etc.)
     """
     desc  = df['_DESC_UP']           # already upper-stripped
     hsn_s = df['_HSN_INT'].astype(str)
+
+    # Pull quantity for quantity-aware checks — handle missing column gracefully
+    qty_col_candidates = ['STANDARD QUANTITY', 'QUANTITY', 'QTY', 'STD QTY']
+    qty_col = next((c for c in qty_col_candidates if c in df.columns), None)
+    if qty_col:
+        qty_series = pd.to_numeric(df[qty_col], errors='coerce').fillna(0)
+    else:
+        qty_series = pd.Series(0, index=df.index)
 
     n = len(df)
     excluded = np.zeros(n, dtype=bool)
     reason   = np.full(n, '', dtype=object)
 
+    # ── 0. Admin / reference rows — always junk regardless of qty ──
+    hit = desc.str.contains(_ADMIN_PATTERNS, na=False)
+    excluded |= hit.values
+    reason[hit.values & (reason == '')] = 'Administrative/reference row — not a product line'
+
+    # ── 0a. Merchandise giveaways (mugs, T-shirts) ──
+    merch_hit = (~pd.Series(excluded, index=df.index)) & \
+                desc.str.contains(_MERCH_PATTERNS, na=False)
+    pos = df.index.get_indexer(merch_hit[merch_hit].index)
+    excluded[pos] = True
+    for p in pos:
+        if reason[p] == '':
+            reason[p] = 'Merchandise giveaway — not coffee export volume'
+
     # ── 1. Hardcoded global pattern (single compiled regex on whole column) ──
     hit = desc.str.contains(_global_excl_pattern, na=False)
-    excluded |= hit.values
-    reason[hit.values] = 'Hardcoded exclusion'
+    new_hits = hit.values & ~excluded
+    excluded |= new_hits
+    reason[new_hits] = 'Hardcoded exclusion'
 
     # ── 2. Hardcoded HSN-specific patterns ──
     for hsn_str, pat in _hsn_excl_compiled.items():
-        mask = (hsn_s == hsn_str) & (~excluded)
+        mask = (hsn_s == hsn_str) & (~pd.Series(excluded, index=df.index))
         if not mask.any():
             continue
         hit = desc[mask].str.contains(pat, na=False)
@@ -352,11 +441,10 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
             '|'.join(re.escape(k) for k in excl_global_kws),
             re.IGNORECASE
         )
-        mask = ~excluded
+        mask = ~pd.Series(excluded, index=df.index)
         if mask.any():
             hit = desc[mask].str.contains(user_global_pat, na=False)
             hit_idx = hit[hit].index
-            # Assign reason: find first matching keyword per row
             for idx in hit_idx:
                 if not excluded[df.index.get_loc(idx)]:
                     d = desc.at[idx]
@@ -390,6 +478,27 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
         for p in pos:
             if reason[p] == '':
                 reason[p] = 'No coffee signal — strict check for HSN'
+
+    # ── 6. Quantity-aware keyword exclusions ──
+    # Only applies to rows not already excluded.
+    # A row is excluded only when BOTH:
+    #   (a) the description contains the keyword, AND
+    #   (b) qty < the threshold for that keyword
+    # This preserves high-qty "sample" / FOC shipments that have commercial volume.
+    not_yet_excluded = ~pd.Series(excluded, index=df.index)
+    for kw, qty_threshold, junk_reason in QUANTITY_AWARE_EXCLUSIONS:
+        if not not_yet_excluded.any():
+            break
+        kw_hit  = not_yet_excluded & desc.str.contains(re.escape(kw), na=False)
+        low_qty = qty_series < qty_threshold
+        junk_hit = kw_hit & low_qty
+        pos = df.index.get_indexer(junk_hit[junk_hit].index)
+        excluded[pos] = True
+        for p in pos:
+            if reason[p] == '':
+                reason[p] = junk_reason
+        # Update the not_yet_excluded mask after each keyword
+        not_yet_excluded = not_yet_excluded & ~junk_hit
 
     return pd.Series(excluded, index=df.index), pd.Series(reason, index=df.index)
 
