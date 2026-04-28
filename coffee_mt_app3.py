@@ -253,6 +253,8 @@ HARDCODED_EXCLUSIONS = [
     ('KETCHUP', ''),
     ('HOT & SWEET', ''),
     ('TOMATO', ''),
+    ('EXTRACTS ESSENCES AND CONCENTRATES OF COFFE TEA', '21011200'),
+('TEA OR MATE', '21011200'),
 ]
 
 # ================================================================
