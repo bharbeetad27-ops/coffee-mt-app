@@ -307,13 +307,14 @@ QUANTITY_AWARE_EXCLUSIONS = [
 #   GSTIN/GSTN require (?=\W) lookahead so 'GSTNO:33...' (the actual GST
 #       registration number embedded in a product description) does not match.
 # ─────────────────────────────────────────────────────────────────────────────
+
 _ADMIN_PATTERNS = re.compile(
     r'\b(?:GSTIN(?=\W)|GSTN(?=\W)|GST\s+NO(?=\W)'
     r'|TAX\s+INV(?:OICE)?|INV\s*NO|INVOICE\s*NO'
-    r'|ICO\s+SI\s+NUMBER|ICO\s+MARK\s+NO|PERMIT\s+NUMBER)',
+    r'|ICO\s+SI\s+NUMBER|ICO\s+MARK\s+NO|PERMIT\s+NUMBER'
+    r'|REF\s*NO\.?:)',          # ← ADD THIS
     re.IGNORECASE,
 )
-
 # Merchandise giveaways — not coffee export volume
 # NOTE: MUG removed from this pattern.
 # 'NESCAFE GOLD JAR 12X90G PR MUG IN' = coffee jar with bundled promo mug.
