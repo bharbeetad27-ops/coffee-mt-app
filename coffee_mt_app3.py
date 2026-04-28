@@ -266,20 +266,26 @@ HARDCODED_EXCLUSIONS = [
 # A row is excluded only when:
 #   keyword in description.upper()  AND  qty < qty_threshold
 # ================================================================
+# Thresholds are now in METRIC TONNES (MT), not raw quantity numbers.
+# This makes the check unit-independent: 0.05 MT = 50 KGS regardless of
+# whether the row declares quantity in KGS, MTS, NOS, PCS, or CTM.
+# The qty_series passed to the check is pre-converted to MT in step 6 below.
+# NOS/PCS/CTM rows where MT cannot be determined → NaN → threshold skipped
+# (conservative: never junk a row purely because its unit is unresolvable).
 QUANTITY_AWARE_EXCLUSIONS = [
-    # Keyword                   Qty threshold   Reason
-    ('FREE SAMPLE',             50,             'FOC sample below commercial qty threshold'),
-    ('SAMPLE',                  10,             'Sample shipment below commercial qty threshold'),
-    ('TEST REPORT',             5,              'QC/test sample'),
-    ('FOR EXHIBITION',          5,              'Exhibition goods — NCV'),
-    ('EXHIBITION GOODS',        5,              'Exhibition goods — NCV'),
-    ('NO COMMERCIAL VALUE',     5,              'Explicitly NCV'),
-    ('NCV',                     5,              'Explicitly NCV — no commercial value'),
-    ('NOT FOR SALE',            20,             'Marked not for sale below commercial qty'),
-    ('FREE OF COST',            20,             'FOC shipment below commercial qty threshold'),
-    ('PROMOTIONAL MATERIAL',    20,             'Promotional material below commercial qty'),
-    ('GIFT',                    5,              'Gift/personal-use shipment'),
-    ('PERSONAL USE',            5,              'Personal-use — not commercial trade'),
+    # Keyword                   MT threshold    Reason
+    ('FREE SAMPLE',             0.05,           'FOC sample — below 50 KGS commercial threshold'),
+    ('SAMPLE',                  0.05,           'Sample shipment — below 50 KGS commercial threshold'),
+    ('TEST REPORT',             0.02,           'QC/test sample — below 20 KGS'),
+    ('FOR EXHIBITION',          0.10,           'Exhibition goods — NCV below 100 KGS'),
+    ('EXHIBITION GOODS',        0.10,           'Exhibition goods — NCV below 100 KGS'),
+    ('NO COMMERCIAL VALUE',     0.10,           'Explicitly NCV — below 100 KGS'),
+    ('NCV',                     0.10,           'Explicitly NCV — no commercial value'),
+    ('NOT FOR SALE',            0.05,           'Not-for-sale — below 50 KGS'),
+    ('FREE OF COST',            0.05,           'FOC shipment — below 50 KGS'),
+    ('PROMOTIONAL MATERIAL',    0.05,           'Promotional material — below 50 KGS'),
+    ('GIFT',                    0.02,           'Gift/personal shipment — below 20 KGS'),
+    ('PERSONAL USE',            0.02,           'Personal use — not commercial trade'),
 ]
 
 # ================================================================
@@ -288,24 +294,33 @@ QUANTITY_AWARE_EXCLUSIONS = [
 # permit numbers) — these are NEVER product shipments and must
 # always go to junk regardless of quantity.
 # ================================================================
+# ── ADMIN PATTERN — v2 (fixed) ───────────────────────────────────────────────
+# REMOVED intentionally (documented):
+#   BATCH NO, MFG.DT, EXP.DT  — FSSAI-mandated food-safety labels on every
+#       Indian food export. Always follow a product name, never standalone.
+#       Caused 81 false positives (legitimate coffee shipments junked).
+#   SUPPLIER:/MANUFACTURER:/VENDOR: etc — exporters append supplier contact
+#       info as a suffix after the product name. Pure admin rows are fully
+#       identified by GSTIN/TAX INV/ICO # alone.
+#       Caused the BRU COFFEE false positive.
+# FIXED:
+#   GSTIN/GSTN require (?=\W) lookahead so 'GSTNO:33...' (the actual GST
+#       registration number embedded in a product description) does not match.
+# ─────────────────────────────────────────────────────────────────────────────
 _ADMIN_PATTERNS = re.compile(
-    r'\b(?:GSTIN|GSTN|GST\s*NO|TAX\s+INV(?:OICE)?|INV\s*NO|INVOICE\s*NO'
-    r'|ICO\s+SI\s+NUMBER|ICO\s+MARK\s+NO|PERMIT\s+NUMBER|BATCH\s+NO\b'
-    r'|MFG\.\s*DT|EXP\.\s*DT'
-    r'|MANUFACTURER\s*[-:]\s*[A-Z]'
-    r'|SUPPLIER\s*[-:]\s*[A-Z]'
-    r'|VENDOR\s*[-:]'
-    r'|SUPP\s*:'
-    r'|SUPPORTING\s+MFG'
-    r'|NAME\s+SUPPLIER'
-    r'|SUPPLIER\s+NAME\s*[-:]'
-    r'|SUP\s*-)',
+    r'\b(?:GSTIN(?=\W)|GSTN(?=\W)|GST\s+NO(?=\W)'
+    r'|TAX\s+INV(?:OICE)?|INV\s*NO|INVOICE\s*NO'
+    r'|ICO\s+SI\s+NUMBER|ICO\s+MARK\s+NO|PERMIT\s+NUMBER)',
     re.IGNORECASE,
 )
 
 # Merchandise giveaways — not coffee export volume
+# NOTE: MUG removed from this pattern.
+# 'NESCAFE GOLD JAR 12X90G PR MUG IN' = coffee jar with bundled promo mug.
+# MUG here is a pack inclusion, not a standalone mug export.
+# Caused 9 false positives. Coffee-aware MUG check added in step 0b below.
 _MERCH_PATTERNS = re.compile(
-    r'\b(?:TSHIRT|T-SHIRT|MUG\b|SAMPLING\s+TABLE|PROMOTIONAL\s+MATERIAL)',
+    r'\b(?:TSHIRT|T-SHIRT|SAMPLING\s+TABLE|PROMOTIONAL\s+MATERIAL)',
     re.IGNORECASE,
 )
 
@@ -393,13 +408,27 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
     desc  = df['_DESC_UP']           # already upper-stripped
     hsn_s = df['_HSN_INT'].astype(str)
 
-    # Pull quantity for quantity-aware checks — handle missing column gracefully
-    qty_col_candidates = ['STANDARD QUANTITY', 'QUANTITY', 'QTY', 'STD QTY']
-    qty_col = next((c for c in qty_col_candidates if c in df.columns), None)
+    # Pull quantity + unit for quantity-aware checks.
+    # Convert to MT so thresholds are unit-independent.
+    # KGS → /1000  |  MTS → ×1  |  NOS/PCS/CTM → NaN (threshold skipped)
+    qty_col_candidates  = ['STANDARD QUANTITY', 'QUANTITY', 'QTY', 'STD QTY']
+    unit_col_candidates = ['UNIT', 'STANDARD QUANTITY UNIT', 'UOM', 'QTY UNIT']
+    qty_col  = next((c for c in qty_col_candidates  if c in df.columns), None)
+    unit_col = next((c for c in unit_col_candidates if c in df.columns), None)
+
     if qty_col:
-        qty_series = pd.to_numeric(df[qty_col], errors='coerce').fillna(0)
+        raw_qty = pd.to_numeric(df[qty_col], errors='coerce').fillna(0)
+        if unit_col:
+            unit_s = df[unit_col].astype(str).str.strip().str.upper()
+            qty_mt = pd.Series(float('nan'), index=df.index)
+            qty_mt = qty_mt.where(~unit_s.isin(['KGS', 'KG']),  raw_qty / 1000)
+            qty_mt = qty_mt.where(~unit_s.isin(['MTS', 'MT']),  raw_qty)
+            # NOS/PCS/CTM: weight unknown → NaN → threshold check skipped (conservative)
+        else:
+            # No unit column — assume KGS (most common unit in this dataset)
+            qty_mt = raw_qty / 1000
     else:
-        qty_series = pd.Series(0, index=df.index)
+        qty_mt = pd.Series(float('nan'), index=df.index)
 
     n = len(df)
     excluded = np.zeros(n, dtype=bool)
@@ -418,6 +447,20 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
     for p in pos:
         if reason[p] == '':
             reason[p] = 'Merchandise giveaway — not coffee export volume'
+
+    # ── 0b. MUG — coffee-aware check ────────────────────────────────────────────
+    # 'NESCAFE GOLD JAR PR MUG IN' = coffee jar with bundled promo mug.
+    # Only exclude when MUG appears with NO coffee product signal in the description.
+    # (Non-21011xxx MUG rows are caught by the wrong-HSN scanner separately.)
+    not_yet_0b = ~pd.Series(excluded, index=df.index)
+    mug_hit    = not_yet_0b & desc.str.contains(r'\bMUG\b', na=False)
+    no_coffee  = ~desc.str.contains(_strict_coffee_signal_pattern, na=False)
+    mug_junk   = mug_hit & no_coffee
+    pos = df.index.get_indexer(mug_junk[mug_junk].index)
+    excluded[pos] = True
+    for p in pos:
+        if reason[p] == '':
+            reason[p] = 'Merchandise giveaway — standalone mug'
 
     # ── 1. Hardcoded global pattern (single compiled regex on whole column) ──
     hit = desc.str.contains(_global_excl_pattern, na=False)
@@ -490,7 +533,9 @@ def apply_exclusions_vectorised(df, excl_global_kws, excl_hsn_kws):
         if not not_yet_excluded.any():
             break
         kw_hit  = not_yet_excluded & desc.str.contains(re.escape(kw), na=False)
-        low_qty = qty_series < qty_threshold
+        # qty_mt is NaN for NOS/PCS/CTM — NaN < threshold evaluates to False,
+        # so rows with unresolvable units are conservatively NOT excluded.
+        low_qty = qty_mt < qty_threshold
         junk_hit = kw_hit & low_qty
         pos = df.index.get_indexer(junk_hit[junk_hit].index)
         excluded[pos] = True
