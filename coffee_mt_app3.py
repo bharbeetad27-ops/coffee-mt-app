@@ -1085,12 +1085,17 @@ def process_file(file, excl_df_json):
     df_s1['_CHICORY_CAT'] = clf_results.apply(lambda x: x[0] if x else None)
 
     def _add_blend_cols(df_sub):
-        idx = df_sub.index
+        """
+        Re-applies classify_chicory on df_sub's own _DESC_UP column so that
+        the result index always matches df_sub.index — safe after any concat
+        or reset_index operation.
+        """
         df_sub = df_sub.copy()
-        df_sub['COFFEE_PCT']  = clf_results[idx].apply(lambda x: x[1] if x else None)
-        df_sub['CHICORY_PCT'] = clf_results[idx].apply(lambda x: x[2] if x else None)
-        df_sub['CONFIDENCE']  = clf_results[idx].apply(lambda x: x[3] if x else None)
-        df_sub['BLEND_NOTES'] = clf_results[idx].apply(lambda x: x[4] if x else None)
+        local_clf = df_sub['_DESC_UP'].apply(classify_chicory)
+        df_sub['COFFEE_PCT']  = local_clf.apply(lambda x: x[1] if x else None)
+        df_sub['CHICORY_PCT'] = local_clf.apply(lambda x: x[2] if x else None)
+        df_sub['CONFIDENCE']  = local_clf.apply(lambda x: x[3] if x else None)
+        df_sub['BLEND_NOTES'] = local_clf.apply(lambda x: x[4] if x else None)
         return df_sub
 
     # Sheet 2 — chicory EXPLICITLY named in description (word or ratio)
@@ -1099,9 +1104,9 @@ def process_file(file, excl_df_json):
     # Sheet 3 — matched to known brand table
     df_s3 = _add_blend_cols(df_s1[df_s1['_CHICORY_CAT'] == 'KNOWN_BRAND'].copy())
 
-    # Sheet 4 — assumed from brand name or any other description signal
-    #   Includes: ASSUMED and PURE_COFFEE rows from brand table
-    #           + any residual rows with a chicory signal not caught above
+    # Sheet 4 — assumed from brand name or any other description signal.
+    # Concat first (which resets the index), THEN call _add_blend_cols so
+    # the local re-classification always sees a consistent index.
     s4_brand  = df_s1[df_s1['_CHICORY_CAT'].isin(['ASSUMED', 'PURE_COFFEE'])].copy()
     s4_signal = df_s1[
         df_s1['_CHICORY_CAT'].isna() &
