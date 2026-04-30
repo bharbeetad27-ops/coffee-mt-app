@@ -291,21 +291,21 @@ def apply_exclusions(df, excl_global_kws, excl_hsn_kws):
     _mark(mug_hit & no_sig, 'Merchandise giveaway — standalone mug')
 
     # Step 0c — hardcoded non-soluble product types (structural, file-invariant)
-_HARDCODED_EXCL_PAT = re.compile(
-    r'\b(?:CHUKKU|CHUKKUKAPPI|SUKKU|KAPI\b|KAPPI\b|KAAPI|GINGER\s+COFFEE'
-    r'|FILTER\s+COFFEE\s+POWDER|GROUND\s+COFFEE|ROASTED\s+COFFEE'
-    r'|COLD\s+COFFEE|LIQUID\s+COFFEE|DECOCTION|COLD\s+BREWED'
-    r'|FRAPPE|INSTANT\s+NOODLES|INSTANT\s+TEA|MASALA\s+TEA|MASALA\s+CHAI'
-    r'|GREEN\s+COFFEE\s+EXTRACT|GREEN\s+COFFEE\s+BEAN'
-    r'|CAFFEINE\s+ANHYDROUS|NATURAL\s+CAFFEINE|CHLOROGENIC\s+ACID)\b',
-    re.IGNORECASE,
-)
-not_yet = ~pd.Series(excluded, index=df.index)
-_mark(not_yet & desc.str.contains(_HARDCODED_EXCL_PAT, na=False),
-      'Hardcoded structural exclusion')
+    _HARDCODED_EXCL_PAT = re.compile(
+        r'\b(?:CHUKKU|CHUKKUKAPPI|SUKKU|KAPI\b|KAPPI\b|KAAPI|GINGER\s+COFFEE'
+        r'|FILTER\s+COFFEE\s+POWDER|GROUND\s+COFFEE|ROASTED\s+COFFEE'
+        r'|COLD\s+COFFEE|LIQUID\s+COFFEE|DECOCTION|COLD\s+BREWED'
+        r'|FRAPPE|INSTANT\s+NOODLES|INSTANT\s+TEA|MASALA\s+TEA|MASALA\s+CHAI'
+        r'|GREEN\s+COFFEE\s+EXTRACT|GREEN\s+COFFEE\s+BEAN'
+        r'|CAFFEINE\s+ANHYDROUS|NATURAL\s+CAFFEINE|CHLOROGENIC\s+ACID)\b',
+        re.IGNORECASE,
+    )
+    not_yet = ~pd.Series(excluded, index=df.index)
+    _mark(not_yet & desc.str.contains(_HARDCODED_EXCL_PAT, na=False),
+          'Hardcoded structural exclusion')
 
-# Step 1 — user global keywords
-if excl_global_kws:
+    # Step 1 — user global keywords
+    if excl_global_kws:
         pat = re.compile('|'.join(re.escape(k) for k in excl_global_kws), re.IGNORECASE)
         not_yet = ~pd.Series(excluded, index=df.index)
         hit = desc[not_yet].str.contains(pat, na=False)
@@ -1168,7 +1168,7 @@ def process_file(file, excl_df_json):
     # Sheet 4 — assumed from brand name or any other description signal.
     # Concat first (which resets the index), THEN call _add_blend_cols so
     # the local re-classification always sees a consistent index.
-   s4_brand = df_s1[df_s1['_CHICORY_CAT'] == 'ASSUMED'].copy()
+    s4_brand = df_s1[df_s1['_CHICORY_CAT'] == 'ASSUMED'].copy()
     s4_signal = df_s1[
         df_s1['_CHICORY_CAT'].isna() &
         df_s1['_DESC_UP'].str.contains(CHICORY_SIGNAL_PAT, na=False)
