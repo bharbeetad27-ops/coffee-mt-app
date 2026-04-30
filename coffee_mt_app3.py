@@ -132,13 +132,60 @@ TARGET_HSN         = SOLUBLE_COFFEE_HSN | CHICORY_PREMIX_HSN
 
 # Keywords that flag a row as soluble coffee when it appears under a wrong HSN
 SOLUBLE_KEYWORDS = [
-    'INSTANT COFFEE', 'SOLUBLE COFFEE', 'SPRAY DRIED COFFEE',
-    'FREEZE DRIED COFFEE', 'AGGLOMERATED COFFEE', 'AGGLOMERATED INSTANT',
-    'FREEZE-DRIED COFFEE', 'SPRAY-DRIED COFFEE', 'COFFEE EXTRACT POWDER',
-    'COFFEE PREMIX', 'NESCAFE', 'BRU INSTANT', 'SUNRISE EXTRA',
+    # ── Core soluble coffee type keywords (original) ──
+    'INSTANT COFFEE',
+    'SOLUBLE COFFEE',
+    'SPRAY DRIED COFFEE',
+    'FREEZE DRIED COFFEE',
+    'AGGLOMERATED COFFEE',
+    'AGGLOMERATED INSTANT',
+    'FREEZE-DRIED COFFEE',
+    'SPRAY-DRIED COFFEE',
+    'COFFEE EXTRACT POWDER',
+    'COFFEE PREMIX',
+    'NESCAFE',
+    'BRU INSTANT',
+    'SUNRISE EXTRA',
+
+    # ── Gap A: Typo / no-space variants seen across 25 files ──
+    'INSTANTCOFFEE',       # no space between INSTANT and COFFEE
+    'INSTANTCOFEE',        # double typo variant
+    'INSTANT COFEE',       # single-letter drop
+    'INSTANT COF',         # truncated
+    'FREEZE DRIED INSTANTCOFFEE',
+    'SPRAY DRIED INSTANTCOFFEE',
+
+    # ── Gap B: Indian soluble coffee brands not in original list ──
+    'BRU COFFEE',
+    'BRU ORIGINAL',
+    'BRU OPTIMA',
+    'BRU EXPORT',
+    'BRU PURE',
+    'BRU STAND UP',
+    'NARASUS',             # covers NARASUS INSTANT, NARASUS PURE, NARASUS INSTA STRONG etc.
+    'COTHAS COFFEE',
+    'CCL XTRA',
+    'CCL SPECIAL',
+    'CCL SPECIALE',
+    'RC COFFEE',
+    'TC GOLD',             # Tata Coffee Gold export SKU
+    'TATA COFFEE GRAND',
+    'MACCOFFEE',
+    'QUIK CAFE',
+    'QUIKCAFE',
+
+    # ── Gap C: Product type keywords not in original list ──
+    'CAPPUCCINO',
+    'COFFEE LATTE',
+    'COFFEE LATE',         # common exporter misspelling of LATTE
+    'PRE MIX COFFEE',
+    'AGGLO CAMPO',
+    'INDIAN INSTANT GRANULATED',
+
+    # ── Gap D: Bulk export code pattern (Coffee Board permit rows) ──
+    'COFFEE POWDER CODE',
 ]
 sol_pattern = '|'.join(re.escape(k) for k in SOLUBLE_KEYWORDS)
-
 CHICORY_WRONG_HSN_KEYWORDS = ['CHICORY', 'CHICCORY']
 chic_wrong_pat = '|'.join(re.escape(k) for k in CHICORY_WRONG_HSN_KEYWORDS)
 
@@ -242,6 +289,20 @@ def apply_exclusions(df, excl_global_kws, excl_hsn_kws):
     mug_hit = not_yet & desc.str.contains(r'\bMUG\b', na=False)
     no_sig  = ~desc.str.contains(_STRICT_COFFEE_SIGNAL, na=False)
     _mark(mug_hit & no_sig, 'Merchandise giveaway — standalone mug')
+
+    # Step 0c — hardcoded non-soluble product types (structural, file-invariant)
+_HARDCODED_EXCL_PAT = re.compile(
+    r'\b(?:CHUKKU|CHUKKUKAPPI|SUKKU|KAPI\b|KAPPI\b|KAAPI|GINGER\s+COFFEE'
+    r'|FILTER\s+COFFEE\s+POWDER|GROUND\s+COFFEE|ROASTED\s+COFFEE'
+    r'|COLD\s+COFFEE|LIQUID\s+COFFEE|DECOCTION|COLD\s+BREWED'
+    r'|FRAPPE|INSTANT\s+NOODLES|INSTANT\s+TEA|MASALA\s+TEA|MASALA\s+CHAI'
+    r'|GREEN\s+COFFEE\s+EXTRACT|GREEN\s+COFFEE\s+BEAN'
+    r'|CAFFEINE\s+ANHYDROUS|NATURAL\s+CAFFEINE|CHLOROGENIC\s+ACID)\b',
+    re.IGNORECASE,
+)
+not_yet = ~pd.Series(excluded, index=df.index)
+_mark(not_yet & desc.str.contains(_HARDCODED_EXCL_PAT, na=False),
+      'Hardcoded structural exclusion')
 
     # Step 1 — user global keywords
     if excl_global_kws:
@@ -1107,7 +1168,7 @@ def process_file(file, excl_df_json):
     # Sheet 4 — assumed from brand name or any other description signal.
     # Concat first (which resets the index), THEN call _add_blend_cols so
     # the local re-classification always sees a consistent index.
-    s4_brand  = df_s1[df_s1['_CHICORY_CAT'].isin(['ASSUMED', 'PURE_COFFEE'])].copy()
+   s4_brand = df_s1[df_s1['_CHICORY_CAT'] == 'ASSUMED'].copy()
     s4_signal = df_s1[
         df_s1['_CHICORY_CAT'].isna() &
         df_s1['_DESC_UP'].str.contains(CHICORY_SIGNAL_PAT, na=False)
