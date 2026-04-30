@@ -304,8 +304,8 @@ not_yet = ~pd.Series(excluded, index=df.index)
 _mark(not_yet & desc.str.contains(_HARDCODED_EXCL_PAT, na=False),
       'Hardcoded structural exclusion')
 
-    # Step 1 — user global keywords
-    if excl_global_kws:
+# Step 1 — user global keywords
+if excl_global_kws:
         pat = re.compile('|'.join(re.escape(k) for k in excl_global_kws), re.IGNORECASE)
         not_yet = ~pd.Series(excluded, index=df.index)
         hit = desc[not_yet].str.contains(pat, na=False)
