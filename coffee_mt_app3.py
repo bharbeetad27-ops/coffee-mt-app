@@ -235,7 +235,7 @@ def build_excl_list_lookup(excl_df_json):
     has_hsn = 'HSN_FILTER' in excl_df.columns
     has_rsn = 'REASON'     in excl_df.columns
     kw_col  = excl_df['KEYWORD'].astype(str).str.upper().str.strip()    if has_kw  else pd.Series([''] * len(excl_df))
-    hsn_col = excl_df['HSN_FILTER'].astype(str).str.strip()             if has_hsn else pd.Series([''] * len(excl_df))
+    hsn_col = excl_df['HSN_FILTER'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True) if has_hsn else ...   if has_hsn else pd.Series([''] * len(excl_df))
     rsn_col = excl_df['REASON'].astype(str)                             if has_rsn else pd.Series(['Exclusion list'] * len(excl_df))
     valid     = kw_col != ''
     is_global = valid & hsn_col.isin(['', 'nan', 'NAN'])
