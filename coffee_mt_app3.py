@@ -243,6 +243,41 @@ def apply_exclusions(df, excl_global_kws, excl_hsn_kws):
     no_sig  = ~desc.str.contains(_STRICT_COFFEE_SIGNAL, na=False)
     _mark(mug_hit & no_sig, 'Merchandise giveaway — standalone mug')
 
+    # Step 0c — hardcoded non-soluble product types (structural, file-invariant)
+    # These categories consistently appear under coffee HSN codes but are
+    # definitively not soluble coffee. Regex handles all spacing variations.
+    _HARDCODED_EXCL_PAT = re.compile(
+        r'\b(?:'
+        # South Indian herbal / filter coffee variants
+        r'CHUKKU|CHUKKUKAPPI|SUKKU|KAPI(?!NO)|KAPPI|KAAPI'
+        r'|GINGER\s+COFFEE|FILTER\s+COFFEE(?:\s+POWDER)?'
+        r'|GROUND\s+COFFEE|ROASTED\s+COFFEE'
+        # Cold / liquid coffee — not soluble powder
+        r'|COLD\s+COFFEE|LIQUID\s+COFFEE|DECOCTION'
+        r'|COLD\s+BREWED(?:\s+COFFEE(?:\s+CONCENTRATE)?)?'
+        r'|FRAPPE'
+        # Tea products misfiled under coffee HSN
+        r'|INSTANT\s+TEA|MASALA\s+TEA|MASALA\s+CHAI'
+        r'|SPRAY\s+DRIED\s+BLACK\s+TEA(?:\s+EXTRACT)?'
+        # Green coffee nutraceuticals — not soluble coffee
+        r'|GREEN\s+COFFEE\s+BEAN(?:\s+EXTRACT)?'
+        r'|GREEN\s+COFFEE\s+EXTRACT'
+        r'|GREEN\s+COFFEE\s+ROBUSTA'
+        r'|COFFEE\s+BEAN\s+EXTRACT'
+        r'|COFFEE\s+BERRY\s+EXTRACT'
+        r'|COFFEE\s+OIL'
+        # Nutraceutical / chemical extracts
+        r'|CAFFEINE\s+ANHYDROUS|NATURAL\s+CAFFEINE'
+        r'|CHLOROGENIC\s+ACID'
+        # Coffee pods — not soluble powder exports
+        r'|DOLCE\s+GUSTO|NESPRESSO\s+PODS'
+        r')\b',
+        re.IGNORECASE,
+    )
+    not_yet = ~pd.Series(excluded, index=df.index)
+    _mark(not_yet & desc.str.contains(_HARDCODED_EXCL_PAT, na=False),
+          'Hardcoded structural exclusion — not soluble coffee')
+
     # Step 1 — user global keywords
     if excl_global_kws:
         pat = re.compile('|'.join(re.escape(k) for k in excl_global_kws), re.IGNORECASE)
