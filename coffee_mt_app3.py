@@ -146,7 +146,19 @@ _ADMIN_PATTERNS = re.compile(
     r'\b(?:GSTIN(?=\W)|GSTN(?=\W)|GST\s+NO(?=\W)'
     r'|TAX\s+INV(?:OICE)?|INV\s*NO|INVOICE\s*NO'
     r'|ICO\s+SI\s+NUMBER|ICO\s+MARK\s+NO|PERMIT\s+NUMBER'
-    r'|REF\s*NO\.?:)',
+    r'|REF\s*NO\.?:'
+    # Customs declaration boilerplate (split across rows in CYBEX)
+    r'|REBATE\s+OBTAINED|SERVICE\s+TAX\s+PAID'
+    r'|ON\s+THE\s+GROUND\s+THAT|SPECIFIED\s+SERVICES'
+    r'|IN\s+ANY\s+OTHER\s+MANNER|THEGROUND\s+THAT'
+    r'|LESSTHAN\s+THE|WE\s+DECLARE\s+THAT'
+    r'|WE\s+HEREBY\s+DECLARE|ADMISSIBLE\s+UNDER'
+    r'|CHAPTER\s*3\s+OF\s+FTP|BENEFITS\s+AS\s+ADMISSIBLE'
+    r'|THESPECIFIED\s+SERVICES|OFRATE\s+SPECIFIED'
+    r'|ON\s+THE\s+BASIS\s+OF\s*RATE|FREE\s+ON\s+BOARD\s*\(FOB\)'
+    r'|NO\s+FURTHER\s+REBATE|IN\s+RESPECT\s+OF\s+THE\s+SPECIFIED'
+    r'|UNDER\s+PROCEDURE\s+SPECIFIED|PARAGRAPH\s+3'
+    r'|VALUE\s+OF\s+THE\s+SAID\s+GOODS|DECLARED\s+FREE\s+ON\s+BOARD)',
     re.IGNORECASE,
 )
 _MERCH_PATTERNS = re.compile(
