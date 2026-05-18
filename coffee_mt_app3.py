@@ -458,10 +458,13 @@ KNOWN_BRANDS = [
 ]
 
 def _extract_ratio(desc_up):
+    # Only match when numbers sum to 100 — prevents permit numbers
+    # like '67/28' (sum=95) being misread as blend ratios.
     desc_up = safe_str(desc_up)
-    m = re.search(r'\b(\d{2})\s*[:/]\s*(\d{2})\b', desc_up)
-    if m:
-        return int(m.group(1)), int(m.group(2))
+    for m in re.finditer(r'\\b(\\d{2})\\s*([:/])\\s*(\\d{2})\\b', desc_up):
+        a, b = int(m.group(1)), int(m.group(3))
+        if a + b == 100:
+            return a, b
     return None, None
 
 def classify_chicory(desc_up):
@@ -494,7 +497,8 @@ def classify_chicory(desc_up):
 
 CHICORY_SIGNAL_PAT = re.compile(
     r'CHICORY|CHICCORY|CICCORY|RICORY'
-    r'|\b\d{2}\s*[:/]\s*\d{2}\b'
+    # Explicit blend ratios that sum to 100 — avoids matching permit numbers like 67/28
+    r'|\b(?:50[:/]50|60[:/]40|40[:/]60|70[:/]30|30[:/]70|80[:/]20|20[:/]80|75[:/]25|25[:/]75|65[:/]35|35[:/]65|55[:/]45|45[:/]55|53[:/]47|47[:/]53|85[:/]15|15[:/]85|90[:/]10|10[:/]90)\b'
     # Sunrise variants — all chicory blends (Nestle Professional)
     r'|NESCAFE.*SUNRISE|SUNRISE.*NESCAFE'
     r'|SUNRISE EXTRA|SUNRISE.*BLENDED|SUNRISE.*INSTA|SUNRISE.*PREMIUM'
