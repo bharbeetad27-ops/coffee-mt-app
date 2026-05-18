@@ -426,7 +426,7 @@ def safe_str(x):
     return str(x).strip().upper()
 
 KNOWN_BRANDS = [
-    (r'NESCAFE.*SUNRISE|SUNRISE.*REGULAR|SUNRISE EXTRA|SUNRISE BLENDED|SUNRISE INSTA', 70, 30, 'CONFIRMED', 'Nestle Professional listing'),
+    (r'NESCAFE.*SUNRISE|SUNRISE.*NESCAFE|SUNRISE.*REGULAR|SUNRISE EXTRA|SUNRISE BLENDED|SUNRISE INSTA|SUNRISE COFFEE|SUNRISE.*PREMIUM|SUNRISE\s+BRAND', 70, 30, 'CONFIRMED', 'Nestle Professional listing'),
     (r'NESCAFE CLASSIC',    100, 0,  'CONFIRMED', 'Pure instant coffee'),
     (r'NESCAFE GOLD',       100, 0,  'CONFIRMED', 'Premium pure coffee'),
     (r'NESCAFE INTENSO',    100, 0,  'CONFIRMED', 'Pure instant — confirmed'),
@@ -1229,7 +1229,33 @@ def process_file(file, excl_df_json):
     # ── Helper columns ────────────────────────────────────────────
     df['_HSN_INT'] = norm_hsn_series(df[hs_col])
     df['_HSN_STR'] = df['_HSN_INT'].astype(str)
-    df['_DESC_UP'] = df[desc_col].astype(str).str.upper().str.strip()
+
+    # Build _DESC_UP: use desc_col, then fall back to any other PRODUCT DESC
+    # column that has content when the primary is blank/NaN. Handles files
+    # where 'PRODUCT DESCRIPTION' column is NaN but 'PRODUCT DESCRIPTION2'
+    # carries the actual description (common in some CYBEX exports).
+    # We check pd.isna() on the ORIGINAL column (before astype(str)) so that
+    # np.float64(nan) values are correctly detected as blank.
+    desc_raw = df[desc_col]
+    is_blank  = desc_raw.isna() | (desc_raw.astype(str).str.strip() == '')
+    desc_series = desc_raw.astype(str).str.strip()
+
+    fallback_desc_cols = [
+        c for c in df.columns
+        if c != desc_col
+        and 'DESC' in c.upper()
+        and 'PRODUCT' in c.upper()
+    ]
+    for fb_col in fallback_desc_cols:
+        fb_raw    = df[fb_col]
+        fb_blank  = fb_raw.isna() | (fb_raw.astype(str).str.strip() == '')
+        fb_series = fb_raw.astype(str).str.strip()
+        # Only fill from fallback where primary is blank AND fallback has content
+        desc_series = desc_series.where(~is_blank | fb_blank, fb_series)
+        # Update blank mask for next fallback column
+        is_blank = is_blank & fb_blank
+
+    df['_DESC_UP'] = desc_series.str.upper().str.strip()
     df['_BUCKET']  = bucket_hsn_series(df['_HSN_INT'])
 
     # ── Exclusions ────────────────────────────────────────────────
