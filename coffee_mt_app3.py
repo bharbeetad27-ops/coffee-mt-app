@@ -1096,7 +1096,7 @@ def process_file(file, excl_df_json):
                 return i
         return 0
 
-    try:
+ try:
     file.seek(0)
     hdr_row = _find_header_row(file, 'calamine')
     file.seek(0)
@@ -1107,11 +1107,23 @@ def process_file(file, excl_df_json):
 
     for col in df.columns:
         df[col] = df[col].astype(str)
-    except Exception:
+
+except Exception:
     try:
         file.seek(0)
         hdr_row = _find_header_row(file, 'openpyxl')
         file.seek(0)
+
+        df = pd.read_excel(file, header=hdr_row, engine='openpyxl')
+
+        df = df.fillna('')
+
+        for col in df.columns:
+            df[col] = df[col].astype(str)
+
+    except Exception:
+        return None
+
 
         df = pd.read_excel(file, header=hdr_row, engine='openpyxl')
 
