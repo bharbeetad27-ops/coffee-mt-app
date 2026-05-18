@@ -1313,7 +1313,7 @@ def process_file(file, excl_df_json):
     df_s2 = _add_blend_cols(df_s1[df_s1['_CHICORY_CAT'] == 'EXPLICIT'].copy())
     df_s3 = _add_blend_cols(df_s1[df_s1['_CHICORY_CAT'] == 'KNOWN_BRAND'].copy())
 
-    s4_brand  = df_s1[df_s1['_CHICORY_CAT'].isin(['ASSUMED', 'PURE_COFFEE'])].copy()
+    s4_brand  = df_s1[df_s1['_CHICORY_CAT'] == 'ASSUMED'].copy()
     s4_signal = df_s1[
         df_s1['_CHICORY_CAT'].isna() &
         df_s1['_DESC_UP'].str.contains(CHICORY_SIGNAL_PAT, na=False)
