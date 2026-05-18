@@ -1097,26 +1097,28 @@ def process_file(file, excl_df_json):
         return 0
 
     try:
+    file.seek(0)
+    hdr_row = _find_header_row(file, 'calamine')
+    file.seek(0)
+
+    df = pd.read_excel(file, header=hdr_row, engine='calamine')
+
+    df = df.fillna('')
+
+    for col in df.columns:
+        df[col] = df[col].astype(str)
+    except Exception:
+    try:
         file.seek(0)
-        hdr_row = _find_header_row(file, 'calamine')
+        hdr_row = _find_header_row(file, 'openpyxl')
         file.seek(0)
-        df = pd.read_excel(file, header=hdr_row, engine='calamine')
-        
+
+        df = pd.read_excel(file, header=hdr_row, engine='openpyxl')
+
         df = df.fillna('')
 
-       for col in df.columns:
-           df[col] = df[col].astype(str)
-    except Exception:
-        try:
-            file.seek(0)
-            hdr_row = _find_header_row(file, 'openpyxl')
-            file.seek(0)
-            df = pd.read_excel(file, header=hdr_row, engine='openpyxl')
-            
-            df = df.fillna('')
-
-            for col in df.columns:
-                df[col] = df[col].astype(str)
+        for col in df.columns:
+            df[col] = df[col].astype(str)
         except Exception:
             file.seek(0)
             df = pd.read_excel(file, engine='openpyxl')
