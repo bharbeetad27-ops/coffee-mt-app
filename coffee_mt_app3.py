@@ -495,12 +495,26 @@ def classify_chicory(desc_up):
 CHICORY_SIGNAL_PAT = re.compile(
     r'CHICORY|CHICCORY|CICCORY|RICORY'
     r'|\b\d{2}\s*[:/]\s*\d{2}\b'
-    r'|SUNRISE EXTRA|SUNRISE.*BLENDED|SUNRISE.*INSTA'
+    # Sunrise variants — all chicory blends (Nestle Professional)
+    r'|NESCAFE.*SUNRISE|SUNRISE.*NESCAFE'
+    r'|SUNRISE EXTRA|SUNRISE.*BLENDED|SUNRISE.*INSTA|SUNRISE.*PREMIUM'
+    r'|SUNRISE COFFEE|SUNRISE.*REGULAR'
+    # BRU chicory blends (HUL)
     r'|BRU INSTANT|BRU.*OPTIMA|BRU.*OPTM|BRU.*SUPER STRONG|BRU STRONG'
     r'|BRU.*PLATINA|BRU.*AROMA|BRU.*INST(?!.*GOLD)'
-    r'|TATA.*GRAND|CONTINENTAL.*MALGUDI|CONTINENTAL.*XTRA|CONTINENTAL.*STRONG'
-    r'|NARASUS.*UDHAYAM|NARASUS.*DELITE|NARASUS.*BESH SUKKU'
-    r'|LEVISTA.*CLASSIC|LEVISTA.*[678]0',
+    r'|BRU.*GREEN LABEL|BRU.*SELECT'
+    # Tata Coffee chicory blends
+    r'|TATA.*GRAND'
+    # Continental chicory blends
+    r'|CONTINENTAL.*MALGUDI|CONTINENTAL.*XTRA|CONTINENTAL.*STRONG'
+    # Narasus chicory blends
+    r'|NARASUS.*UDHAYAM|NARASUS.*UDHAIYAM|NARASUS.*DELITE|NARASUS.*BESH SUKKU'
+    # Levista chicory blends
+    r'|LEVISTA.*CLASSIC|LEVISTA.*[678]0'
+    # Cothas chicory blends
+    r'|COTHAS.*SPECIAL|COTHAS.*PREMIUM|COTHAS.*80'
+    # KDC ratio blends
+    r'|KDC.*[678]0',
     re.IGNORECASE,
 )
 
