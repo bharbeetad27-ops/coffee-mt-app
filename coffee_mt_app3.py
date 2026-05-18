@@ -353,7 +353,11 @@ def bucket_hsn_series(hsn_int):
 # ================================================================
 # SECTION D — CHICORY CLASSIFICATION
 # ================================================================
-
+def safe_str(x):
+    if pd.isna(x):
+        return ""
+    return str(x).strip().upper()
+    
 KNOWN_BRANDS = [
     (r'NESCAFE.*SUNRISE|SUNRISE.*REGULAR|SUNRISE EXTRA|SUNRISE BLENDED|SUNRISE INSTA', 70, 30, 'CONFIRMED', 'Nestle Professional listing'),
     (r'NESCAFE CLASSIC',    100, 0,  'CONFIRMED', 'Pure instant coffee'),
@@ -387,10 +391,16 @@ KNOWN_BRANDS = [
 ]
 
 def _extract_ratio(desc_up):
-    m = re.search(r'\b(\d{2})\s*[:/]\s*(\d{2})\b', desc_up)
-    if m: return int(m.group(1)), int(m.group(2))
-    return None, None
 
+    desc_up = safe_str(desc_up)
+
+    m = re.search(r'\b(\d{2})\s*[:/]\s*(\d{2})\b', desc_up)
+
+    if m:
+        return int(m.group(1)), int(m.group(2))
+
+    return None, None
+    
 def classify_chicory(desc_up):
     """
     Returns (category, coffee_pct, chicory_pct, confidence, notes) or None.
@@ -400,6 +410,11 @@ def classify_chicory(desc_up):
     Sheet 3 ← KNOWN_BRAND (matched to hard-coded brand reference table)
     Sheet 4 ← ASSUMED / PURE_COFFEE + any residual chicory signal rows
     """
+    if pd.isna(desc_up):
+        desc_up = ""
+    else:
+        desc_up = str(desc_up).upper()
+
     has_chicory = bool(re.search(r'CHICORY|CHICCORY|CICCORY|RICORY', desc_up))
     ratio_a, ratio_b = _extract_ratio(desc_up)
 
@@ -1086,12 +1101,22 @@ def process_file(file, excl_df_json):
         hdr_row = _find_header_row(file, 'calamine')
         file.seek(0)
         df = pd.read_excel(file, header=hdr_row, engine='calamine')
+        
+        df = df.fillna('')
+
+       for col in df.columns:
+           df[col] = df[col].astype(str)
     except Exception:
         try:
             file.seek(0)
             hdr_row = _find_header_row(file, 'openpyxl')
             file.seek(0)
             df = pd.read_excel(file, header=hdr_row, engine='openpyxl')
+            
+            df = df.fillna('')
+
+            for col in df.columns:
+                df[col] = df[col].astype(str)
         except Exception:
             file.seek(0)
             df = pd.read_excel(file, engine='openpyxl')
