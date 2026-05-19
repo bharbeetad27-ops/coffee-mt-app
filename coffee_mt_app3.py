@@ -1378,6 +1378,7 @@ if run_btn:
             st.error("Exclusion list must have a **KEYWORD** column.")
         else:
             excl_df_json = excl_df.to_json()
+            sheet1_pool = []   # accumulates Sheet 1 from each file for cross-year analysis
 
             for f in raws:
                 st.markdown("<hr class='divider'>", unsafe_allow_html=True)
@@ -1395,6 +1396,12 @@ if run_btn:
                     continue
 
                 s1, s2, s3, s4, counts = out
+
+                # Tag this Sheet 1 with source filename and add to multi-file pool
+                s1_tagged = s1.copy()
+                s1_tagged['_SOURCE_FILE'] = f.name
+                sheet1_pool.append(s1_tagged)
+
                 total_rows = sum(v for k, v in counts.items() if k != "error")
                 st.success(f"✓ Pipeline complete — {f.name}")
 
@@ -1504,3 +1511,279 @@ if run_btn:
                         )
                     except Exception as e:
                         st.error(f"Excel generation failed: {e}")
+
+            # ================================================================
+            # CROSS-FILE ANALYSIS MODULE
+            # Pools Sheet 1 from every processed file and computes trend views.
+            # Three views: chicory share, destination region, pure vs blend.
+            # ================================================================
+            if len(sheet1_pool) >= 1:
+                st.markdown("<hr class='divider'>", unsafe_allow_html=True)
+                st.markdown("""
+                <div class="stage-header" style="margin-top: 28px">
+                    <span class="stage-num">ANALYSIS</span>
+                    <span class="stage-title">Multi-File Trend Analysis — Chicory Blending in Indian Soluble Coffee Exports</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── Pool all Sheet 1 dataframes ─────────────────────────────
+                pooled = pd.concat(sheet1_pool, ignore_index=True)
+
+                # Detect date column (CYBEX uses SBDATE, processed files use 'date')
+                date_col = next((c for c in pooled.columns
+                                 if c.upper() in ('SBDATE', 'DATE', 'SHIPMENT DATE', 'SB DATE')), None)
+                if date_col is None:
+                    date_col = next((c for c in pooled.columns if 'DATE' in c.upper()), None)
+
+                # Detect destination region column
+                region_col = next((c for c in pooled.columns
+                                   if 'FOREIGN' in c.upper() and 'REGION' in c.upper()), None)
+                country_col = next((c for c in pooled.columns
+                                    if ('FOREIGN' in c.upper() and 'COUNTRY' in c.upper())
+                                    and 'FINAL' in c.upper()), None)
+                if not country_col:
+                    country_col = next((c for c in pooled.columns
+                                        if 'FOREIGN' in c.upper() and 'COUNTRY' in c.upper()), None)
+
+                if not date_col or 'MT_FINAL' not in pooled.columns:
+                    st.error("Analysis requires date and MT_FINAL columns — not all detected.")
+                else:
+                    # Parse date and build YYYY-MM bucket
+                    pooled['_DATE'] = pd.to_datetime(pooled[date_col], errors='coerce')
+                    pooled = pooled[pooled['_DATE'].notna()].copy()
+                    pooled['_MONTH'] = pooled['_DATE'].dt.to_period('M').astype(str)
+                    pooled['_MT'] = pd.to_numeric(pooled['MT_FINAL'], errors='coerce').fillna(0)
+
+                    # Classify each row into 4 buckets based on _CHICORY_CAT
+                    def _bucket(cat):
+                        if cat == 'EXPLICIT':    return 'Chicory Explicit'
+                        if cat == 'KNOWN_BRAND': return 'Chicory Known Brand'
+                        if cat == 'ASSUMED':     return 'Chicory Assumed'
+                        return 'Pure Coffee'
+                    pooled['_BUCKET_CHIC'] = pooled.get('_CHICORY_CAT', pd.Series([None]*len(pooled))).apply(_bucket)
+
+                    n_months  = pooled['_MONTH'].nunique()
+                    n_files   = pooled['_SOURCE_FILE'].nunique()
+                    total_mt  = pooled['_MT'].sum()
+                    chic_mt   = pooled[pooled['_BUCKET_CHIC'] != 'Pure Coffee']['_MT'].sum()
+                    chic_pct  = chic_mt / total_mt * 100 if total_mt > 0 else 0
+
+                    # ── Top-level KPI cards ───────────────────────────────
+                    k1, k2, k3, k4 = st.columns(4)
+                    with k1:
+                        st.markdown(f"""<div class="result-box">
+                            <div class="result-box-label">Files Pooled</div>
+                            <div class="result-mt">{n_files}</div>
+                            <div class="result-mt-sub">{len(pooled):,} rows</div>
+                        </div>""", unsafe_allow_html=True)
+                    with k2:
+                        st.markdown(f"""<div class="result-box">
+                            <div class="result-box-label">Months Covered</div>
+                            <div class="result-mt">{n_months}</div>
+                            <div class="result-mt-sub">monthly bucket</div>
+                        </div>""", unsafe_allow_html=True)
+                    with k3:
+                        st.markdown(f"""<div class="result-box">
+                            <div class="result-box-label">Total Soluble MT</div>
+                            <div class="result-mt">{total_mt:,.0f}</div>
+                            <div class="result-mt-sub">across all files</div>
+                        </div>""", unsafe_allow_html=True)
+                    with k4:
+                        st.markdown(f"""<div class="result-box">
+                            <div class="result-box-label">Chicory Share</div>
+                            <div class="result-mt">{chic_pct:.1f}%</div>
+                            <div class="result-mt-sub">of total volume</div>
+                        </div>""", unsafe_allow_html=True)
+
+                    # ── View toggle ───────────────────────────────────────
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    view = st.radio(
+                        "Select trend view:",
+                        ["Chicory Share Over Time", "Destination Region Mix", "Pure vs Blend Split by Month"],
+                        horizontal=True,
+                        key="analysis_view",
+                    )
+
+                    # ── View 1: Chicory Share Over Time ───────────────────
+                    if view == "Chicory Share Over Time":
+                        monthly = (pooled.groupby(['_MONTH', '_BUCKET_CHIC'])['_MT']
+                                   .sum().unstack(fill_value=0).sort_index())
+
+                        # Reorder columns: Pure first, then chicory tiers
+                        col_order = ['Pure Coffee', 'Chicory Explicit', 'Chicory Known Brand', 'Chicory Assumed']
+                        monthly = monthly.reindex(columns=[c for c in col_order if c in monthly.columns], fill_value=0)
+                        monthly_total = monthly.sum(axis=1)
+                        share = monthly.div(monthly_total, axis=0).fillna(0) * 100
+
+                        # Two-panel chart: absolute MT (stacked bar) + % share (line)
+                        import altair as alt
+                        # Long-form for Altair
+                        long_abs = monthly.reset_index().melt(id_vars='_MONTH', var_name='Category', value_name='MT')
+                        chart_abs = (
+                            alt.Chart(long_abs)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X('_MONTH:N', title='Month', sort=monthly.index.tolist()),
+                                y=alt.Y('MT:Q', title='MT'),
+                                color=alt.Color('Category:N',
+                                                scale=alt.Scale(
+                                                    domain=col_order,
+                                                    range=['#00d4aa', '#3b82f6', '#f59e0b', '#a78bfa']),
+                                                legend=alt.Legend(orient='bottom')),
+                                tooltip=['_MONTH', 'Category', alt.Tooltip('MT:Q', format=',.1f')],
+                            )
+                            .properties(height=320, title='Volume by chicory category (MT, stacked)')
+                        )
+                        st.altair_chart(chart_abs, use_container_width=True)
+
+                        # Chicory share % line
+                        share['_TOTAL_CHIC'] = share.drop(columns=['Pure Coffee'], errors='ignore').sum(axis=1)
+                        share_df = share[['_TOTAL_CHIC']].reset_index().rename(columns={'_TOTAL_CHIC': 'Chicory %'})
+                        chart_share = (
+                            alt.Chart(share_df)
+                            .mark_line(point=True, color='#00d4aa', strokeWidth=2.5)
+                            .encode(
+                                x=alt.X('_MONTH:N', title='Month', sort=monthly.index.tolist()),
+                                y=alt.Y('Chicory %:Q', title='Chicory share (%)', scale=alt.Scale(domain=[0, max(share_df['Chicory %'].max() * 1.15, 10)])),
+                                tooltip=['_MONTH', alt.Tooltip('Chicory %:Q', format='.1f')],
+                            )
+                            .properties(height=260, title='Chicory share of total soluble exports (%)')
+                        )
+                        st.altair_chart(chart_share, use_container_width=True)
+
+                        # Underlying data
+                        with st.expander("View underlying data"):
+                            display = monthly.copy()
+                            display['Total MT'] = monthly_total
+                            display['Chicory %'] = share['_TOTAL_CHIC'].round(2)
+                            st.dataframe(display.style.format("{:,.1f}"), use_container_width=True)
+
+                    # ── View 2: Destination Region Mix ────────────────────
+                    elif view == "Destination Region Mix":
+                        if not region_col and not country_col:
+                            st.warning("No destination region/country column found in the data.")
+                        else:
+                            dest_col = region_col if region_col else country_col
+                            dest_label = "Region" if region_col else "Country"
+                            pooled['_DEST']    = pooled[dest_col].astype(str).str.strip().str.upper().replace('NAN', 'UNKNOWN')
+                            pooled['_IS_CHIC'] = pooled['_BUCKET_CHIC'] != 'Pure Coffee'
+
+                            # By destination — total MT, chicory MT, chicory share
+                            grp = pooled.groupby('_DEST').agg(
+                                total_mt=('_MT', 'sum'),
+                                chic_mt =('_MT', lambda s: s[pooled.loc[s.index, '_IS_CHIC']].sum()),
+                            )
+                            grp['chic_pct'] = (grp['chic_mt'] / grp['total_mt'] * 100).fillna(0)
+                            grp = grp.sort_values('total_mt', ascending=False).head(15)
+
+                            import altair as alt
+                            grp_reset = grp.reset_index()
+                            chart_dest = (
+                                alt.Chart(grp_reset)
+                                .mark_bar()
+                                .encode(
+                                    y=alt.Y('_DEST:N', title=dest_label, sort='-x'),
+                                    x=alt.X('total_mt:Q', title='Total MT'),
+                                    color=alt.Color('chic_pct:Q',
+                                                    title='Chicory %',
+                                                    scale=alt.Scale(scheme='viridis')),
+                                    tooltip=[alt.Tooltip('_DEST:N', title=dest_label),
+                                             alt.Tooltip('total_mt:Q', format=',.1f', title='Total MT'),
+                                             alt.Tooltip('chic_mt:Q',  format=',.1f', title='Chicory MT'),
+                                             alt.Tooltip('chic_pct:Q', format='.1f',  title='Chicory %')],
+                                )
+                                .properties(height=420, title=f'Top 15 {dest_label.lower()}s by volume — coloured by chicory share')
+                            )
+                            st.altair_chart(chart_dest, use_container_width=True)
+
+                            # Monthly trend per top-5 destinations
+                            top5 = grp.head(5).index.tolist()
+                            sub  = pooled[pooled['_DEST'].isin(top5)].copy()
+                            sub_monthly = sub.groupby(['_MONTH', '_DEST'])['_MT'].sum().reset_index()
+                            chart_trend = (
+                                alt.Chart(sub_monthly)
+                                .mark_line(point=True)
+                                .encode(
+                                    x=alt.X('_MONTH:N', title='Month'),
+                                    y=alt.Y('_MT:Q', title='MT'),
+                                    color=alt.Color('_DEST:N', title=dest_label),
+                                    tooltip=['_MONTH', '_DEST', alt.Tooltip('_MT:Q', format=',.1f')],
+                                )
+                                .properties(height=320, title=f'Top 5 {dest_label.lower()}s — monthly volume trend')
+                            )
+                            st.altair_chart(chart_trend, use_container_width=True)
+
+                            with st.expander("View underlying data"):
+                                st.dataframe(grp.style.format({"total_mt": "{:,.1f}", "chic_mt": "{:,.1f}", "chic_pct": "{:.1f}"}),
+                                             use_container_width=True)
+
+                    # ── View 3: Pure vs Blend Split by Month ──────────────
+                    else:
+                        pooled['_SIMPLE_CAT'] = pooled['_BUCKET_CHIC'].apply(
+                            lambda x: 'Pure Coffee' if x == 'Pure Coffee' else 'Chicory Blend'
+                        )
+                        monthly_split = (pooled.groupby(['_MONTH', '_SIMPLE_CAT'])['_MT']
+                                         .sum().unstack(fill_value=0).sort_index())
+                        for col in ['Pure Coffee', 'Chicory Blend']:
+                            if col not in monthly_split.columns:
+                                monthly_split[col] = 0
+                        monthly_split = monthly_split[['Pure Coffee', 'Chicory Blend']]
+
+                        import altair as alt
+                        long_split = monthly_split.reset_index().melt(id_vars='_MONTH', var_name='Type', value_name='MT')
+                        chart_split = (
+                            alt.Chart(long_split)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X('_MONTH:N', title='Month', sort=monthly_split.index.tolist()),
+                                y=alt.Y('MT:Q', title='MT'),
+                                color=alt.Color('Type:N',
+                                                scale=alt.Scale(domain=['Pure Coffee', 'Chicory Blend'],
+                                                                range=['#00d4aa', '#a78bfa']),
+                                                legend=alt.Legend(orient='bottom')),
+                                tooltip=['_MONTH', 'Type', alt.Tooltip('MT:Q', format=',.1f')],
+                            )
+                            .properties(height=340, title='Pure coffee vs chicory blend — monthly volume (MT)')
+                        )
+                        st.altair_chart(chart_split, use_container_width=True)
+
+                        # Stacked 100% normalised view
+                        total_per_month = monthly_split.sum(axis=1)
+                        norm = monthly_split.div(total_per_month, axis=0).fillna(0) * 100
+                        long_norm = norm.reset_index().melt(id_vars='_MONTH', var_name='Type', value_name='Share')
+                        chart_norm = (
+                            alt.Chart(long_norm)
+                            .mark_bar()
+                            .encode(
+                                x=alt.X('_MONTH:N', title='Month', sort=monthly_split.index.tolist()),
+                                y=alt.Y('Share:Q', title='Share (%)', stack='normalize', scale=alt.Scale(domain=[0, 100])),
+                                color=alt.Color('Type:N',
+                                                scale=alt.Scale(domain=['Pure Coffee', 'Chicory Blend'],
+                                                                range=['#00d4aa', '#a78bfa']),
+                                                legend=alt.Legend(orient='bottom')),
+                                tooltip=['_MONTH', 'Type', alt.Tooltip('Share:Q', format='.1f')],
+                            )
+                            .properties(height=260, title='Pure vs chicory blend — monthly share (%)')
+                        )
+                        st.altair_chart(chart_norm, use_container_width=True)
+
+                        with st.expander("View underlying data"):
+                            display = monthly_split.copy()
+                            display['Total MT']     = total_per_month
+                            display['Chicory Share %'] = norm['Chicory Blend'].round(2)
+                            st.dataframe(display.style.format("{:,.1f}"), use_container_width=True)
+
+                    # ── Download pooled analysis dataset ──────────────────
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    buf = io.BytesIO()
+                    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+                        pooled.drop(columns=[c for c in pooled.columns if c.startswith('_')],
+                                    errors='ignore').to_excel(writer, sheet_name='Pooled Data', index=False)
+                    buf.seek(0)
+                    st.download_button(
+                        "⬇  Download pooled multi-file dataset",
+                        data=buf.getvalue(),
+                        file_name="MULTI_FILE_POOLED_ANALYSIS.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_pooled",
+                    )
