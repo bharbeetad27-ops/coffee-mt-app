@@ -551,10 +551,12 @@ def _convert_row_to_mt(row):
     clean = clean.replace(' X ', 'X').replace(' x ', 'X').replace('*', 'X')
 
     for pat, fn in [
-        (r'(\d+(?:\.\d+)?)\s*KGS?\s*X\s*(\d+)',  lambda m: float(m.group(1)) * float(m.group(2))),
-        (r'(\d+(?:\.\d+)?)KGX(\d+)',               lambda m: float(m.group(1)) * float(m.group(2))),
-        (r'(\d+)X(\d+(?:\.\d+)?)KG\b',             lambda m: float(m.group(1)) * float(m.group(2))),
-        (r'(\d+(?:\.\d+)?)\s*KGS?\s*NET',          lambda m: float(m.group(1))),
+        for pat, fn in [
+    (r'(\d+(?:\.\d+)?)\s*KGS?\s*NET',      lambda m: float(m.group(1)) / 1000),
+    (r'(\d+(?:\.\d+)?)KGSX(\d+)',           lambda m: float(m.group(1)) * float(m.group(2)) / 1000),
+    (r'(\d+)X(\d+(?:\.\d+)?)KG\b',         lambda m: float(m.group(1)) * float(m.group(2)) / 1000),
+    (r'(\d+(?:\.\d+)?)\s*KGS?\s*NET',      lambda m: float(m.group(1)) / 1000),
+]:
     ]:
         m = re.search(pat, clean, re.IGNORECASE)
         if m:
