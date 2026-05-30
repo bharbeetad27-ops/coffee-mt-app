@@ -1777,8 +1777,7 @@ if run_btn:
                     st.markdown("<br>", unsafe_allow_html=True)
                     buf = io.BytesIO()
                     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
-                        pooled.drop(columns=[c for c in pooled.columns if c.startswith('_')],
-                                    errors='ignore').to_excel(writer, sheet_name='Pooled Data', index=False)
+                        pooled.to_excel(writer, sheet_name='Pooled Data', index=False)
                     buf.seek(0)
                     st.download_button(
                         "⬇  Download pooled multi-file dataset",
